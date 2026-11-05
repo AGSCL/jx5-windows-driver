@@ -228,10 +228,185 @@ Fuentes primarias revisadas:
 - [Encabezado público de Microsoft: bluetoothleapis.h](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/bluetoothleapis.h).
 - [Muestras de controladores Bluetooth de Microsoft](https://github.com/MicrosoftDocs/windows-driver-docs/blob/staging/windows-driver-docs-pr/samples/bluetooth-driver-samples.md).
 
-### Secuencia de trabajo
+### Resultado real de la prueba nativa con sesión activa
 
-1. Probar la API nativa `BluetoothGATT*` con la sesión GATT activa, según el
-   resultado de investigación anterior. Si tampoco permite acceso, investigar una
+Comando ejecutado en el PC:
+
+```powershell
+& "C:\ProgramData\anaconda3\python.exe" tools/probe_gatt_session.py --address B7:FC:01:C6:F3:7E --native-hid
+```
+
+La sesión llegó a `ACTIVE`. La API de Configuration Manager encontró una interfaz
+del dispositivo LE del anillo y ninguna interfaz de servicio HID de la clase
+consultada. `CreateFileW` abrió el dispositivo con acceso de lectura. A través de
+ese handle, `BluetoothGATTGetServices` devolvió siete servicios, incluido HID, y
+`BluetoothGATTGetCharacteristics` devolvió doce características del servicio HID.
+Ambas consultas finales terminaron con `HRESULT=0x00000000`. Las consultas previas
+de tamaño devolvieron `0x800700EA`, el resultado esperado para solicitar buffers.
+
+Los Report `2A4D` con `IsNotifiable=1` tienen handles de valor `0x0027`, `0x002B`,
+`0x0032`, `0x0036`, `0x003A` y `0x003E`. También se enumeró Report Map `2A4B`,
+handle de valor `0x0042`, sin leer su contenido. El programa terminó con
+`HID_NATIVO_ENUMERADO` y liberó sus handles y sesión. Las 13 pruebas automatizadas
+pasaron, incluida la comprobación de tamaños y offsets de las estructuras nativas.
+
+**Alcance:** Win32 permite abrir el dispositivo y enumerar los metadatos HID en
+esta configuración, aunque WinRT deniegue `RequestAccessAsync`. La enumeración
+puede utilizar la caché de Windows; no demuestra transferencia actual de informes
+ni que se pueda habilitar el CCCD o registrar callbacks. Aún no se llamó a
+`BluetoothGATTRegisterEvent` ni se escribieron descriptores. La ausencia de una
+interfaz de servicio es relevante: la documentación de registro de eventos pide
+un handle de servicio; comprobar ese requisito antes de prometer recepción usando
+solo el handle del dispositivo. No hay motivo demostrado para reemplazar el
+controlador antes de resolver esa prueba.
+
+Para repetir esta enumeración se añadió `--native-hid` al diagnóstico existente.
+No instala controladores, no lee valores y no habilita notificaciones.
+
+### Prueba de registro de notificaciones nativas
+
+Se ejecutó `tools/probe_gatt_session.py --address B7:FC:01:C6:F3:7E
+--native-register`. Con la sesión `ACTIVE`, `CreateFileW` abrió la interfaz del
+dispositivo con lectura y escritura; la enumeración de los siete servicios y las
+doce características HID volvió a funcionar. Se pasaron a
+`BluetoothGATTRegisterEvent` las estructuras originales de los seis Report con
+notificaciones, una por registro. Los seis devolvieron **`0x80070001`
+(HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION))**. No se aceptó ningún callback.
+
+No apareció una interfaz de servicio HID ni bajo la clase genérica de servicios
+GATT ni bajo el UUID `1812` usado como clase de interfaz. Se probó por tanto el
+handle del dispositivo, aunque la documentación de registro requiere uno de
+servicio. Este resultado demuestra que ese handle no permite el registro en esta
+configuración; no demuestra que el periférico rechace notificaciones.
+
+No se escribieron CCCD ni otros atributos: no hubo una suscripción habilitada,
+ni escucha de botones. El diagnóstico nuevo verifica únicamente la precondición
+de registro y libera inmediatamente cualquier registro que pudiera aceptar una
+configuración distinta. Pasaron 14 pruebas automatizadas, incluida la estructura
+de registro y el manejo de un registro rechazado.
+
+El siguiente bloqueo concreto es obtener una interfaz de servicio HID utilizable
+sin depender de su inicio fallido, o documentar un transporte alternativo. Repetir
+el registro con el mismo handle no lo resuelve. No se ha validado un reemplazo
+de controlador que proporcione esa interfaz.
+
+### Secuencia de trabajo actualizada
+
+La inspección de los INF instalados aporta una hipótesis concreta para la siguiente
+prueba. `C:\Windows\INF\bthleenum.inf` (10.0.26100.9711) asigna el identificador
+compatible `BTHLEDevice\GenericATTService` a `AttGenericService`, que incluye
+`umpass.inf`. El servicio HID del anillo ya informó ese identificador compatible.
+`C:\Windows\INF\hidbthle.inf` (10.0.26100.9549) asigna el UUID `1812` al
+controlador HID que falla. `umpass.inf` describe el controlador Microsoft UmPass
+y las secciones que otros INF deben incluir; no contiene por sí mismo una
+promesa de acceso a HID ni una corrección para este periférico.
+
+**Prueba candidata:** comprobar si Windows ofrece el controlador genérico ATT
+ya instalado como alternativa compatible para la instancia del servicio HID del
+JX-05. Si la selección por instancia y la reversión a `hidbthle.inf` están
+verificadas, cambiar solo esa asociación temporalmente y repetir la búsqueda de
+interfaz de servicio y registro de callbacks. La hipótesis es evitar el inicio de
+HidOverGatt y obtener el acceso genérico. Que exista el identificador compatible
+no garantiza que Windows permita el cambio ni que deje de reservar el UUID HID.
+No se ha realizado el cambio. No es necesario inventar un nuevo driver para
+comprobar primero la disponibilidad de esta alternativa instalada.
+
+#### Controlador genérico confirmado como candidato
+
+Después de agregar nuevamente el anillo, se ejecutó la consulta de solo lectura
+`pnputil /enum-devices /instanceid <instancia HID actual> /drivers`.
+La instancia consultada fue:
+
+```text
+BTHLEDevice\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&0105ac_PID&0220_REV&0110_b7fc01c6f37e\a&49e30ac&17&0023
+```
+
+Windows devolvió estos dos candidatos:
+
+| Paquete | Versión | Coincidencia | Rango | Estado |
+| --- | --- | --- | --- | --- |
+| `hidbthle.inf` | 10.0.26100.9549 | UUID HID `1812` | `00FF2000` | Mejor clasificado / instalado |
+| `bthleenum.inf` | 10.0.26100.9711 | `BTHLEDevice\GenericATTService` | `00FF2001` | Superado |
+
+Ambos indican proveedor Microsoft y firmante Microsoft Windows. «Superado» es
+el estado de clasificación del candidato genérico; no significa que se haya
+intentado instalar ni que haya fallado. La presencia del genérico como candidato
+compatible queda confirmada para esa instancia. Su funcionamiento con el HID del
+anillo y la exposición de una interfaz de servicio siguen pendientes.
+
+No se cambió ninguna asociación. La instancia puede cambiar al quitar y volver
+a agregar el anillo. El próximo paso es preparar selección por instancia y
+reversión verificable a `hidbthle.inf` antes de efectuar el cambio temporal.
+
+#### Resultado del cambio temporal al genérico ATT
+
+Se aplicó `--apply generic` a la instancia terminada en `A&49E30AC&19&0023`.
+`DiInstallDevice` aceptó la instalación sin solicitar reinicio. La comprobación
+PnP confirmó `bthleenum.inf`, servicio `UmPass`, estado `OK` y `CM_PROB_NONE`.
+Esto verifica que la selección del genérico es posible para esa instancia.
+
+El escaneo posterior no recibió anuncios durante 60 segundos. Se abrió entonces
+el dispositivo ya registrado por su dirección conocida y tipo PUBLIC; la sesión
+pasó de `CLOSED` a `ACTIVE`. Se repitieron acceso WinRT y registro nativo:
+
+| Operación con genérico instalado | Resultado |
+| --- | --- |
+| Descubrimiento HID WinRT | `SUCCESS` |
+| Solicitud de acceso HID WinRT | `DENIED_BY_SYSTEM` |
+| Enumeración nativa mediante handle del dispositivo | 7 servicios, 12 características HID |
+| Registro de los seis Report mediante handle del dispositivo | `0x80070001` en todos |
+| Interfaz HID bajo clase genérica de servicios | Ahora presente |
+| Interfaz bajo UUID HID `1812` | Ahora presente |
+| `CreateFileW` con lectura/escritura sobre ambas interfaces de servicio | Error Win32 5: acceso denegado |
+
+No se habilitaron CCCD ni se recibieron informes. El genérico sí hizo aparecer
+las interfaces, pero no concedió la apertura de lectura/escritura probada. No se
+llegó a comprobar apertura de solo lectura con el genérico antes de la siguiente
+reconexión; no extrapolar el resultado a todos los modos de apertura.
+
+El usuario informó que tuvo que volver a conectar el anillo. La consulta posterior
+encontró una nueva instancia, terminada en `A&49E30AC&1A&0023`, con `hidbthle.inf`,
+servicio `mshidumdf` y código 10. Windows volvió a elegir el controlador original
+para esa instancia; el cambio por instancia anterior no se conservó al recrearla.
+No se ejecutó `--apply restore` sobre la nueva instancia porque ya tenía el
+controlador original. La prueba no consiguió una suscripción funcional.
+
+#### Herramienta y comandos de recuperación
+
+Se creó `tools/select_ring_driver.py`. Por defecto solo enumera y verifica ambos
+candidatos con SetupAPI. `--apply generic` selecciona `bthleenum.inf`, sección
+`AttGenericService`; `--apply restore` selecciona `hidbthle.inf`, sección
+`HidBthLE`, mediante `DiInstallDevice` para una sola instancia. Valida UUID HID,
+VID/PID/revisión y dirección del anillo; rechaza otra instancia o candidatos
+ambiguos. No modifica los INF ni elimina paquetes. Informa si Windows solicita
+reinicio y no reinicia el equipo automáticamente.
+
+La comprobación sin cambios encontró ambos candidatos en la instancia terminada
+en `A&49E30AC&19&0023`. Esto verifica la selección, no una reinstalación exitosa:
+la recuperación efectiva todavía requiere ejecutar y verificar el controlador.
+
+Comandos para esa instancia, desde la raíz del repositorio en PowerShell con
+privilegios de administrador (el identificador cambia si se vuelve a agregar):
+
+```powershell
+$ringInstance = 'BTHLEDEVICE\{00001812-0000-1000-8000-00805F9B34FB}_DEV_VID&0105AC_PID&0220_REV&0110_B7FC01C6F37E\A&49E30AC&19&0023'
+# Comprobacion sin cambios:
+& 'C:\ProgramData\anaconda3\python.exe' tools/select_ring_driver.py --instance $ringInstance
+# Cambio temporal:
+& 'C:\ProgramData\anaconda3\python.exe' tools/select_ring_driver.py --instance $ringInstance --apply generic
+# Restauracion explicita:
+& 'C:\ProgramData\anaconda3\python.exe' tools/select_ring_driver.py --instance $ringInstance --apply restore
+# Verificar la asociacion y el estado despues de cada cambio:
+pnputil /enum-devices /instanceid $ringInstance /drivers
+```
+
+La restauración devuelve la asociación original; no corrige el código 10 que
+esta ya presentaba. Si se requiere reinicio, completar ese paso antes de valorar
+el resultado de acceso GATT. Referencia:
+[DiInstallDevice](https://learn.microsoft.com/en-us/windows/win32/api/newdev/nf-newdev-diinstalldevice).
+
+1. Investigar cómo obtener una interfaz de servicio HID utilizable. El registro
+   nativo mediante el handle del dispositivo falló. Investigar una
    DDI o ejemplo documentado para el reemplazo específico del servicio HID.
    La existencia de dispositivos PnP por servicio no garantiza acceso al transporte
    ni elimina la restricción WinRT. Resolver esa viabilidad antes de instalar WDK.
@@ -262,6 +437,112 @@ No hay todavía un paquete de controlador instalable ni una solución funcional.
 
 Estas referencias fundamentan la investigación de arquitectura; no documentan
 una corrección específica para este JX-05 ni garantizan un reemplazo viable.
+
+## Monitor continuo: 5 de noviembre de 2026
+
+Se añadió `tools/monitor_jx05.py`, con estado JSON y registro rotativo local
+en `.jx05-monitor/` (excluido de Git). Mantiene una solicitud GATT, registra
+anuncios y cambios de sesión, y aplica el genérico Microsoft únicamente al
+servicio HID de la dirección conocida cuando aparece con `hidbthle.inf`.
+Cada instancia se intenta una vez por ejecución para evitar reinstalaciones
+en bucle. La prueba nativa se repite cada 60 segundos de sesión activa;
+sigue siendo una comprobación de registro, sin suscripción sostenida ni CCCD.
+
+Validación real: se observaron cinco anuncios y `SESION ACTIVE` a las 12:16:56
+(hora local). Se verificó la parada, que liberó la sesión, y se reinició en
+segundo plano. Al aparecer la instancia nueva `A&49E30AC&1E&0023`, el monitor
+detectó `hidbthle.inf` con `CM_PROB_FAILED_START`, aplicó `bthleenum.inf` sin
+requerir reinicio y confirmó `CM_PROB_NONE`. Se recibió un anuncio con nombre
+JX-05 y RSSI -62; la sesión volvió a `ACTIVE` a las 12:17:38.
+
+A las 12:18:08 el estado seguía `CONNECTED` / `ACTIVE`, con seis anuncios
+en esa ejecución. El intento nativo de las 12:17:44 registró cero suscripciones:
+`0x80070001` usando el handle de dispositivo, y `WIN32=5` al abrir ambas
+interfaces de servicio. El estado consultable indicó `REGISTRO_BLOQUEADO`.
+
+Esto demuestra detección, activación de sesión y reasociación automática del
+genérico. No demuestra recepción de informes de botones. La apertura nativa
+del servicio HID había fallado también con acceso de solo lectura (Win32 5).
+No existe todavía controlador propio. Se aprobaron las 17 pruebas automatizadas;
+se verificaron inicio y parada reales. El monitor no arranca automáticamente
+tras reiniciar Windows; detenerlo conserva la asociación del genérico.
+
+### Apertura mínima y permisos efectivos del servicio
+
+Con la sesión activa y el genérico instalado, una prueba adicional abrió la
+interfaz HID real con `CreateFileW`, acceso 0 y, por separado, `READ_CONTROL`.
+Ambas aperturas funcionaron. La lectura asíncrona con `GENERIC_READ` devolvió
+Win32 5. `GetSecurityInfo` devolvió la siguiente seguridad efectiva:
+
+```text
+O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1201bf;;;WD)(A;;0x1200a9;;;RC)
+```
+
+La DACL concede acceso completo a administradores; el proceso de prueba tenía
+ese grupo habilitado e integridad alta. No hay evidencia de que ampliar esa
+DACL resuelva la denegación. No se modificó.
+
+Usando el handle de servicio abierto con acceso 0, la API nativa enumeró las
+doce características. El registro de los seis informes devolvió `0x80070005`
+en cada caso. Esto prueba una denegación también con un handle de servicio,
+distinta del `0x80070001` obtenido antes con el handle del dispositivo. No se
+habilitó ningún CCCD ni se recibieron informes. La apertura mínima permite
+consultas de metadatos según [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew);
+no equivale a permiso para notificaciones.
+
+La siguiente línea de investigación es la viabilidad de un filtro específico
+que observe la lectura del Report Map y permita comprobar si corregir la
+respuesta anómala evita el fallo de inicio HID. Primero se debe identificar
+una interfaz de transporte y demostrar observación sin modificar respuestas.
+No hay todavía una interfaz de filtro validada ni un prototipo instalable;
+no atribuir viabilidad a un simple INF ni prometer que corregir el mapa basta.
+
+### Captura nueva de la inicialización HID (12:27:44–12:28:30)
+
+Se pausó el monitor, se inició una sesión ETW BTHPORT acotada a 64 MB y se
+seleccionó temporalmente `hidbthle.inf` en la instancia `1E&0023`. Tras 45
+segundos se detuvo ETW, se restauró `bthleenum.inf` y se reinició el monitor.
+No se modificaron respuestas ATT ni se instaló un filtro. Es observación del
+tráfico, no interceptación con capacidad de corregirlo.
+
+Archivos locales, excluidos de Git:
+
+- `.jx05-monitor/hid-start.etl`: captura original, SHA-256
+  `e1f5b36b2f7c08618f2a09d94d8c7e329a7ea6185636c613bcde400e6511eaac`.
+- `.jx05-monitor/hid-start.xml`: conversión con `tracerpt`.
+- `.jx05-monitor/hid-start-att.json`: seis mensajes ATT reensamblados y resumen;
+  no exporta tráfico SMP.
+- `.jx05-monitor/hid-start-summary.txt`: 52 eventos procesados, cero perdidos.
+
+La secuencia del handle HCI `0x0200`, atributo `0x0042`, fue:
+
+| Respuesta (UTC−03:00) | Desplazamiento solicitado | Bytes ATT | Bytes de valor |
+| --- | ---: | ---: | ---: |
+| 12:27:45.2874192 | 0 | 64 | 63 |
+| 12:27:45.3173955 | 63 | 64 | 63 |
+| 12:27:45.3473953 | 126 | 127 | 126 |
+
+Se reutilizó el reensamblador del repositorio; no hubo paquetes excluidos ni
+fragmentos pendientes. Se verificaron mediante aserciones los tres pares de
+desplazamiento/longitud. La captura comenzó con una conexión existente: no
+incluye su negociación MTU ni un evento Connection Complete con la dirección.
+La atribución al JX-05 se apoya en la correlación temporal con su inicio HID y
+la coincidencia con la secuencia previa. La identificación de `0x0042` como
+Report Map procede de la enumeración nativa anterior. El MTU 64 está demostrado
+en la captura anterior; no volver a presentarlo como negociado en esta nueva.
+
+Durante esta misma prueba, PnP informó código 10, `0xC00000E5`, servicio
+`mshidumdf`, filtro inferior `WUDFRd` y pila `BthLEEnum`. El INF local usa
+`Microsoft.Bluetooth.Profiles.HidOverGatt.dll` en UMDF 2.15. Esta disposición
+coincide con el transporte HID LE integrado documentado por
+[Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/hid-transports).
+No se encontró un SDK/WDK en las ubicaciones habituales inspeccionadas y aún
+no hay un punto de interposición validado para modificar esta lectura.
+
+El usuario apagó y encendió el anillo después de la captura. El monitor observó
+transiciones CLOSED/ACTIVE; a las 12:33:12 volvió a mostrar CONNECTED/ACTIVE,
+con el genérico y `REGISTRO_BLOQUEADO`. La detección de encendido/apagado y la
+recepción de informes HID siguen siendo resultados separados.
 
 ## Reproducir el análisis sin nuevas capturas
 

@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.jx05-monitor/
 *.etl
 jx05-*.xml
 jx05-log-*.txt

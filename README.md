@@ -5,15 +5,52 @@
 - La sesión GATT se mantuvo activa durante 60 segundos en una prueba real.
 - Windows descubre el servicio HID `1812`, pero devuelve `DENIED_BY_SYSTEM`
   al solicitar acceso desde WinRT. No se llegó a suscribir informes.
+- La API nativa Win32 sí abrió el dispositivo y enumeró 12 características HID,
+  incluidas seis Report con capacidad de notificación. Aún no se han suscrito.
+- El registro de callbacks por el handle del dispositivo falló en los seis Report
+  con `0x80070001`. No apareció una interfaz del servicio HID y no se habilitaron
+  notificaciones. El bloqueo pendiente es acceder a esa interfaz de servicio.
 - El controlador HID `hidbthle.inf` sigue con código 10 y estado `0xC00000E5`.
+- Se probó temporalmente el genérico ATT: inició sin errores y expuso interfaces
+  HID, pero su apertura de lectura/escritura devolvió «acceso denegado». Al
+  recrearse la instancia del anillo, Windows volvió a seleccionar `hidbthle.inf`.
 - Todavía no hay un controlador propio ni recepción de botones comprobada.
 
 Los resultados y la salida del diagnóstico están en
 [INVESTIGACION.md](INVESTIGACION.md). El siguiente paso es comprobar una vía
-documentada para un controlador específico del servicio, antes de instalar
-herramientas o cambiar controladores. Mantener GATT activo no corrige por sí
+de suscripción mediante la API nativa, antes de instalar herramientas o cambiar
+controladores. Mantener GATT activo no corrige por sí
 solo el error HID. El trabajo continúa con el PC y el anillo actuales, sin
 modificar el firmware ni añadir hardware.
+
+## Monitor continuo del JX-05
+
+`tools/monitor_jx05.py --run` mantiene una solicitud de conexión GATT y observa
+anuncios del anillo `B7:FC:01:C6:F3:7E`. Requiere administrador. Si Windows recrea
+su instancia HID con `hidbthle.inf`, intenta asociarle el genérico Microsoft
+`bthleenum.inf` una vez por instancia durante esa ejecución. No cambia otros
+dispositivos. No es un controlador propio ni garantiza recibir botones.
+
+Consulta y parada desde esta carpeta:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' tools/monitor_jx05.py --status
+& 'C:\ProgramData\anaconda3\python.exe' tools/monitor_jx05.py --stop
+```
+
+El estado está en `.jx05-monitor/status.json`; el registro rotativo, en
+`.jx05-monitor/events.log`. Comprueba la fecha `updated`. `ACTIVE` confirma una
+sesión, y `ANUNCIO` solo publicidad Bluetooth. `REGISTRO_BLOQUEADO` significa que
+no se pudo registrar la recepción HID. El monitor comprueba esa precondición
+cada 60 segundos mientras la sesión está activa; todavía no mantiene una
+suscripción ni habilita el CCCD, incluso si el registro llegara a aceptarse.
+
+La ejecución en segundo plano dura hasta detenerla, cerrar la sesión de Windows
+o reiniciar el equipo; no se instaló inicio automático. Pararla libera GATT y
+conserva el genérico. Para restaurar la asociación HID original, detén primero
+el monitor y usa `tools/select_ring_driver.py --instance <instancia> --apply restore`
+como administrador, con la instancia exacta indicada en el estado. Restaurar
+el controlador original puede devolver el error de controlador observado antes.
 
 ## Prueba experimental de acceso directo (GATT)
 

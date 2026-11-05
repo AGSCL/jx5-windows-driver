@@ -87,7 +87,7 @@ async def check_hid_access(device, cache_mode, emit=print):
             service.close()
 
 
-async def run(address, check_hid=False):
+async def run(address, check_hid=False, native_hid=False, native_register=False):
     from winrt.windows.devices.bluetooth import BluetoothLEDevice, BluetoothCacheMode
     from winrt.windows.devices.bluetooth.advertisement import (
         BluetoothLEAdvertisementWatcher, BluetoothLEScanningMode)
@@ -140,6 +140,9 @@ async def run(address, check_hid=False):
                 return 3
             emit = lambda message: print(message, flush=True)
             on_active = (lambda: check_hid_access(device, BluetoothCacheMode.UNCACHED, emit)) if check_hid else None
+            if native_hid or native_register:
+                from probe_native_gatt import probe
+                on_active = lambda: asyncio.to_thread(probe, remote_address, emit, native_register)
             return await monitor(session, emit=emit, on_active=on_active)
         finally:
             session.close()
@@ -150,8 +153,13 @@ async def run(address, check_hid=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--address", help="direccion Bluetooth en formato AA:BB:CC:DD:EE:FF")
-    parser.add_argument("--check-hid", action="store_true",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check-hid", action="store_true",
                         help="al activar GATT, comprobar acceso al servicio HID y enumerar caracteristicas")
+    mode.add_argument("--native-hid", action="store_true",
+                      help="al activar GATT, comprobar HID mediante la API nativa Win32")
+    mode.add_argument("--native-register", action="store_true",
+                      help="probar registro nativo de callbacks Report; todavia no habilita CCCD")
     args = parser.parse_args()
     address = None
     if args.address:
@@ -162,7 +170,7 @@ def main():
         except ValueError:
             parser.error("direccion Bluetooth invalida")
     try:
-        return asyncio.run(run(address, args.check_hid))
+        return asyncio.run(run(address, args.check_hid, args.native_hid, args.native_register))
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
