@@ -63,3 +63,7 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(seen, [39, 43])
         self.assertTrue(any("informes=2" in m for m in messages))
+
+
+if __name__ == "__main__":
+    unittest.main()

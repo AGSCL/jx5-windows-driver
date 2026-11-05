@@ -1,6 +1,46 @@
 # JX-05 en Windows
 
+## Estado confirmado en el PC
+
+- La sesión GATT se mantuvo activa durante 60 segundos en una prueba real.
+- Windows descubre el servicio HID `1812`, pero devuelve `DENIED_BY_SYSTEM`
+  al solicitar acceso desde WinRT. No se llegó a suscribir informes.
+- El controlador HID `hidbthle.inf` sigue con código 10 y estado `0xC00000E5`.
+- Todavía no hay un controlador propio ni recepción de botones comprobada.
+
+Los resultados y la salida del diagnóstico están en
+[INVESTIGACION.md](INVESTIGACION.md). El siguiente paso es comprobar una vía
+documentada para un controlador específico del servicio, antes de instalar
+herramientas o cambiar controladores. Mantener GATT activo no corrige por sí
+solo el error HID. El trabajo continúa con el PC y el anillo actuales, sin
+modificar el firmware ni añadir hardware.
+
 ## Prueba experimental de acceso directo (GATT)
+
+Para comprobar primero la estabilidad de una sesión GATT en Windows:
+
+```powershell
+python tools/probe_gatt_session.py
+```
+
+Enciende el anillo antes de iniciar. El programa espera un anuncio del JX-05,
+utiliza el tipo de dirección anunciado y solicita `GattSession.MaintainConnection`.
+Espera hasta 30 segundos por la activación y mide 60 segundos desde `ACTIVE`.
+`SESION_ESTABLE` confirma esa duración; `SESION_PERDIDA` informa cuánto duró.
+Al terminar libera su sesión. Esta prueba no suscribe informes ni solicita leer
+Report Map; Windows puede iniciar HID por su cuenta. Requiere las mismas
+dependencias indicadas abajo. Se puede seleccionar el anillo con `--address`.
+
+Para comprobar el acceso al servicio HID al activar la sesión:
+
+```powershell
+python tools/probe_gatt_session.py --check-hid
+```
+
+Esta opción consulta el servicio 1812, solicita acceso y enumera sus
+características. Muestra los estados de Windows, incluidos `ACCESS_DENIED` o
+`DENIED_BY_SYSTEM` cuando correspondan. No lee valores ni habilita notificaciones.
+`HID_ENUMERADO` confirma la enumeración; aún no demuestra recepción de botones.
 
 Esta prueba intenta suscribirse a los informes del anillo. Todavía no controla
 PowerPoint. Windows puede reservar el servicio HID o desconectar el dispositivo;
@@ -45,7 +85,7 @@ Base de diagnóstico para el mando Bluetooth ALLOYSEED JX-05. El manual disponib
 
 La ventana solo muestra eventos de teclado recibidos mientras tiene el foco. No distingue el anillo de otros teclados y puede no mostrar eventos multimedia, ratón, táctiles o informes HID propietarios. La ausencia de eventos no demuestra que el dispositivo esté averiado. No se instala ningún controlador ni se modifican ajustes del sistema.
 
-Comparte los resultados de cada botón y los identificadores de dispositivo para decidir si basta una aplicación de remapeo o se necesita investigar informes HID adicionales. No se ha probado con hardware real.
+Comparte los resultados de cada botón y los identificadores de dispositivo para decidir si basta una aplicación de remapeo o se necesita investigar informes HID adicionales. La prueba de teclado no se ha validado con eventos del anillo; las pruebas GATT reales se documentan en INVESTIGACION.md.
 
 ## Registro de desconexión en tiempo real
 

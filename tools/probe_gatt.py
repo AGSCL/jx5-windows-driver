@@ -1,8 +1,8 @@
 """Prueba experimental de acceso GATT al JX-05 en Windows.
 
 Requiere: python -m pip install "bleak>=1,<3"
-No traduce botones ni instala un controlador. El sistema operativo puede iniciar
-su propio controlador HID al conectar, aunque este programa no lea Report Map.
+No traduce botones ni instala un controlador. Windows puede iniciar su propio
+controlador HID al conectar, aunque este programa no lea Report Map.
 """
 import argparse
 import asyncio
@@ -63,57 +63,38 @@ async def probe(scanner, client_factory, *, name="JX-05", address=None,
         subscribed = 0
         for characteristic in reports:
             try:
-                # Passing the characteristic object disambiguates repeated UUIDs.
                 await client.start_notify(characteristic, on_report)
                 subscribed += 1
-                emit(f"SUSCRITO handle=0x{characteristic.handle:04x}")
-            except Exception as error:
-                emit(f"SUSCRIPCION_FALLIDA handle=0x{characteristic.handle:04x}: "
-                     f"{type(error).__name__}: {error}")
+            except Exception as exc:
+                emit(f"ERROR_SUSCRIPCION handle=0x{characteristic.handle:04x}: {exc}")
         if not subscribed:
-            emit("ACCESO_FALLIDO: ninguna suscripcion funciono.")
-            return 3
-        emit(f"ESCUCHANDO {listen_seconds:g} segundos: pulsa cada boton por separado.")
+            return 4
+        emit("ESCUCHANDO: pulsa cada boton por separado.")
         try:
             await asyncio.wait_for(disconnected.wait(), timeout=listen_seconds)
         except asyncio.TimeoutError:
             pass
-        dropped = disconnected.is_set() or not client.is_connected
-        emit(f"RESULTADO informes={count} desconexion_anticipada={dropped}")
-        if dropped:
-            emit("CONEXION_INTERRUMPIDA: el acceso no se mantuvo durante toda la prueba.")
+        if disconnected.is_set() or not client.is_connected:
+            emit(f"DESCONECTADO: informes={count}")
             return 4
-        if not count:
-            emit("SIN_DATOS: la suscripcion funciono, pero no llegaron informes.")
-            return 5
-        emit("INFORMES_RECIBIDOS: hay datos para investigar el mapeo de botones.")
-        return 0
+        emit(f"FINALIZADO: informes={count}")
+        return 0 if count else 5
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--name", default="JX-05")
-    parser.add_argument("--address")
-    parser.add_argument("--seconds", type=float, default=60)
+    parser.add_argument("--address", help="direccion del anillo")
     args = parser.parse_args()
-    if args.seconds <= 0:
-        parser.error("--seconds debe ser mayor que cero")
-    if sys.platform != "win32":
-        parser.exit(2, "Esta prueba esta destinada a Windows 10/11.\n")
     try:
         from bleak import BleakClient, BleakScanner
     except ImportError:
-        parser.exit(2, 'Instala la dependencia: python -m pip install "bleak>=1,<3"\n')
-    try:
-        return asyncio.run(probe(BleakScanner, BleakClient, name=args.name,
-                                 address=args.address, listen_seconds=args.seconds))
-    except KeyboardInterrupt:
-        print("Prueba interrumpida.")
-        return 130
-    except Exception as error:
-        print(f"PRUEBA_FALLIDA: {type(error).__name__}: {error}")
-        print("Este error no basta para distinguir restricciones de Windows de un fallo del dispositivo.")
+        print('FALTA_BLEAK: instala con python -m pip install "bleak>=1,<3"')
         return 1
+    try:
+        return asyncio.run(probe(BleakScanner, BleakClient, address=args.address))
+    except Exception as exc:
+        print(f"ERROR_GATT: {exc}")
+        return 4
 
 
 if __name__ == "__main__":
