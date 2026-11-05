@@ -1,5 +1,34 @@
 # JX-05 en Windows
 
+## Prueba experimental de acceso directo (GATT)
+
+Esta prueba intenta suscribirse a los informes del anillo. Todavía no controla
+PowerPoint. Windows puede reservar el servicio HID o desconectar el dispositivo;
+el resultado permite decidir si una aplicación puede recibir los botones.
+
+Desde la carpeta del repositorio, con Python instalado, ejecuta por separado:
+
+```powershell
+python -m pip install "bleak>=1,<3"
+```
+
+```powershell
+python tools/probe_gatt.py
+```
+
+Enciende el anillo, activa Bluetooth en Windows y desconecta el anillo del teléfono.
+Mantén su emparejamiento con Windows si ya existe. Si no se detecta, ponlo en modo
+de emparejamiento. Cuando aparezca `ESCUCHANDO`, pulsa cada botón por separado
+durante los 60 segundos de la prueba. Copia la salida completa. `INFORME` indica
+datos recibidos; `HID_NO_VISIBLE`, errores de acceso o desconexiones son resultados
+relevantes, no una indicación para repetir indefinidamente la prueba.
+
+El programa habilita notificaciones GATT y cierra su conexión al terminar. No
+solicita leer Report Map, pero Windows puede leerlo automáticamente durante la
+conexión. Las pruebas automatizadas usan simulaciones: la conexión real debe
+validarse en Windows con el anillo. Si tu Python no está en PATH, sustituye
+`python` por `& "ruta\a\python.exe"` en PowerShell.
+
 Base de diagnóstico para el mando Bluetooth ALLOYSEED JX-05. El manual disponible no documenta sus descriptores HID ni los códigos que transmite; por tanto, todavía no se puede determinar si necesita un controlador adicional ni implementar un mapeo fiable. Windows puede reconocer dispositivos Bluetooth HID mediante sus controladores integrados.
 
 ## Primer diagnóstico en Windows 10/11
