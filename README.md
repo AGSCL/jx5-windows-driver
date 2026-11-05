@@ -14,43 +14,88 @@
 - Se probó temporalmente el genérico ATT: inició sin errores y expuso interfaces
   HID, pero su apertura de lectura/escritura devolvió «acceso denegado». Al
   recrearse la instancia del anillo, Windows volvió a seleccionar `hidbthle.inf`.
-- Todavía no hay un controlador propio ni recepción de botones comprobada.
+- Hay un prototipo KMDF compilado y firmado para pruebas que intenta negociar
+  MTU 23 solo en la conexión del anillo. No está instalado ni ha recibido botones;
+  su eficacia sigue sin comprobarse. Véase [driver/README.md](driver/README.md).
+- El observador Bleak consiguió suscribirse a AE02 y AE42. Tras las pulsaciones
+  confirmadas (derecha, arriba, arriba) no recibió paquetes; se detuvo esta vía.
+  Hubo que ejecutarlo fuera del entorno restringido del agente para acceder al
+  dispositivo. El pasador de diapositivas sigue sin funcionar.
 
 Los resultados y la salida del diagnóstico están en
-[INVESTIGACION.md](INVESTIGACION.md). El siguiente paso es comprobar una vía
-de suscripción mediante la API nativa, antes de instalar herramientas o cambiar
-controladores. Mantener GATT activo no corrige por sí
+[INVESTIGACION.md](INVESTIGACION.md). La vía AE02/AE42 se detuvo sin recibir datos.
+La siguiente prueba propuesta es el filtro MTU experimental, que necesita
+aprobación para intervenir en el adaptador y habilitar carga de prueba con reinicio.
+Mantener GATT activo no corrige por sí
 solo el error HID. El trabajo continúa con el PC y el anillo actuales, sin
 modificar el firmware ni añadir hardware.
 
 ## Monitor continuo del JX-05
 
-`tools/monitor_jx05.py --run` mantiene una solicitud de conexión GATT y observa
-anuncios del anillo `B7:FC:01:C6:F3:7E`. Requiere administrador. Si Windows recrea
-su instancia HID con `hidbthle.inf`, intenta asociarle el genérico Microsoft
-`bthleenum.inf` una vez por instancia durante esa ejecución. No cambia otros
-dispositivos. No es un controlador propio ni garantiza recibir botones.
+La validación de la captura original encontró Report Reference de entradas IDs
+1–6 y salida ID 1. El prefijo HID de 126 bytes solo define entradas 1 y 3; aún
+no es un mapa validado para un filtro corrector. El analizador y las pruebas
+con bytes reales están descritos en [INVESTIGACION.md](INVESTIGACION.md).
 
-Consulta y parada desde esta carpeta:
+`tools/monitor_jx05.py --run` conecta al anillo `B7:FC:01:C6:F3:7E`, redescubre
+las características AE02/AE42 y solicita notificaciones por objeto con Bleak.
+Usa el Python y Bleak existentes; no requiere SDK ni elevación. No instala ni
+reaplica controladores, no envía comandos propietarios y no emite teclas.
+La suscripción sí solicita al dispositivo habilitar notificaciones GATT.
+Cada paquete se registra con hora UTC, UUID, handle actual y bytes completos.
+Los paquetes repetidos se conservan para identificar pulsación, gesto y liberación.
+
+Inicio oculto, consulta y parada desde esta carpeta:
 
 ```powershell
+$monitorScript = Join-Path (Get-Location) 'tools/monitor_jx05.py'
+Start-Process 'C:\ProgramData\anaconda3\pythonw.exe' -ArgumentList ('"' + $monitorScript + '" --run') -WindowStyle Hidden
 & 'C:\ProgramData\anaconda3\python.exe' tools/monitor_jx05.py --status
 & 'C:\ProgramData\anaconda3\python.exe' tools/monitor_jx05.py --stop
 ```
 
 El estado está en `.jx05-monitor/status.json`; el registro rotativo, en
-`.jx05-monitor/events.log`. Comprueba la fecha `updated`. `ACTIVE` confirma una
-sesión, y `ANUNCIO` solo publicidad Bluetooth. `REGISTRO_BLOQUEADO` significa que
-no se pudo registrar la recepción HID. El monitor comprueba esa precondición
-cada 60 segundos mientras la sesión está activa; todavía no mantiene una
-suscripción ni habilita el CCCD, incluso si el registro llegara a aceptarse.
+`.jx05-monitor/events.log` (2 MB y dos copias). Comprueba la fecha `updated`.
+`ESCUCHANDO` confirma al menos una suscripción; `subscriptions` identifica cuáles.
+`BLOQUEADO` indica que ninguna se aceptó y el registro detalla los errores.
+`packets` cuenta notificaciones, no botones identificados. Un escaneo fallido
+no demuestra denegación de acceso. La reconexión espera 2, 4, 8… hasta 60 segundos;
+una conexión de al menos 60 segundos restablece esa espera. `--stop` también
+interrumpe el escaneo, la suscripción y la espera. Un mutex impide dos monitores
+en la misma sesión de Windows.
+
+Antes de pedir una pulsación hay que comprobar `ESCUCHANDO`. Se prueba un botón
+cada vez y se espera confirmación del usuario; apagar/encender requiere también
+su confirmación antes de reanudar. Si no hay paquetes correlacionados, se detiene
+esta vía con `--stop`. No se cambia automáticamente a otro controlador.
+
+El modo presentador permanece desactivado (`presenter_enabled=false`). Todavía
+no se implementa SendInput: falta identificar paquetes reales y sus liberaciones.
+El botón central no tiene asignación. Quedan pendientes diez avances y diez
+retrocesos en cada entorno (PowerPoint, xaringan y Google Slides en primer plano),
+cinco minutos de uso y recuperación tras apagar/encender.
 
 La ejecución en segundo plano dura hasta detenerla, cerrar la sesión de Windows
 o reiniciar el equipo; no se instaló inicio automático. Pararla libera GATT y
-conserva el genérico. Para restaurar la asociación HID original, detén primero
+conserva el controlador asociado. Para restaurar la asociación HID original, detén primero
 el monitor y usa `tools/select_ring_driver.py --instance <instancia> --apply restore`
 como administrador, con la instancia exacta indicada en el estado. Restaurar
 el controlador original puede devolver el error de controlador observado antes.
+
+`tools/monitor_logon.ps1` prepara una tarea por usuario llamada **JX05 Monitor**,
+con `pythonw.exe`, sin consola y sin privilegios elevados. El registro requiere
+confirmación del usuario; por ahora solo se ha preparado el script. Se puede
+revisar sin registrar nada:
+
+```powershell
+./tools/monitor_logon.ps1 -Action Install -WhatIf
+```
+
+Tras confirmar, `-Action Install` la registra para el siguiente inicio de sesión.
+No sustituye una tarea existente. Para desinstalar, solicita primero `--stop` y
+espera `running=false`; luego ejecuta `./tools/monitor_logon.ps1 -Action Uninstall`.
+La desinstalación conserva los registros y no cambia controladores. Si Windows
+deniega el registro de tareas, el inicio manual oculto sigue disponible.
 
 ## Prueba experimental de acceso directo (GATT)
 

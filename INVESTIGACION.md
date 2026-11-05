@@ -2,6 +2,26 @@
 
 ## Conclusión
 
+**Actualización: vía AE02/AE42, 13:44 UTC−03.** Windows aceptó ambas
+suscripciones Bleak por objetos redescubiertos: AE42 en el servicio AE40,
+handle 77 (0x004D), y AE02 en AE00, handle 131 (0x0083). El monitor solo observa:
+no cambia controladores y no emite teclas. La captura se preparó antes de pedir
+una pulsación. El usuario confirmó la secuencia derecha, arriba, arriba;
+con ambas suscripciones activas se recibieron **cero paquetes**. Se detuvo esta
+vía según el criterio acordado. No hay códigos de botón con los que implementar
+un mapeo fiable.
+**El pasador de diapositivas sigue sin estar resuelto.** Los intentos anteriores
+con `BleakDeviceNotFoundError` se hicieron dentro del entorno restringido;
+fuera de él la misma implementación sí conectó y suscribió ambos canales.
+
+La Fase 0 ya contrastó el mapa con los Report Reference de la captura original,
+localizada en el Escritorio. Los seis Report notificables anuncian entradas IDs
+1–6, y otro Report anuncia salida ID 1. El prefijo de 126 bytes solo define
+entradas IDs 1 y 3. La respuesta adicional no es repetición ni rotación del
+prefijo, y concatenarla produce un ítem HID reservado. **No está validado el
+mapa fijo de 126 bytes propuesto para un filtro corrector.** El detalle y las
+pruebas reproducibles están en «Fase 0: resultado con la captura original».
+
 La captura contiene una anomalía reproducible en la lectura larga del descriptor
 HID. Es una explicación plausible del fallo de inicio, no una prueba definitiva
 de su causa interna. Bluepad32 proporciona un antecedente para interpretar los
@@ -581,6 +601,118 @@ adicional: las referencias GATT a otros IDs de informe impiden afirmar que ese
 prefijo describa todos los botones. No se instaló un filtro que finja corregir
 el problema con esos datos incompletos. El monitor y el genérico se conservaron.
 
+### Comprobación de la premisa del mapa fijo, sin instalar herramientas
+
+Se compararon los valores ATT reales de `hid-start-att.json`, quitando el byte
+de opcode: las dos primeras respuestas forman un prefijo de 126 bytes; la
+tercera contiene otros 126 bytes.
+
+- La tercera respuesta NO es idéntica a `prefix[0:126]`.
+- No coincide con ninguna de las 126 rotaciones cíclicas del prefijo.
+- Solo coinciden tres bytes en la misma posición. Sus primeros 18 bytes sí
+  coinciden con `prefix[63:81]`; el siguiente byte ya difiere.
+- Sus últimos 63 bytes contienen 57 ceros. Hay contenido diferente, pero estos
+  datos no bastan para distinguir una continuación válida de corrupción.
+
+Una inspección de ítems HID cortos del prefijo (tamaños 0, 1, 2, 4 según los
+dos bits bajos; límites de ítem y balance de colecciones comprobados) encontró
+tres Collection y tres End Collection, sin truncamientos. Define Report IDs
+1 y 3: Input ID 1 suma 32 bits; Input ID 3 suma 24 bits, incluidos bits de
+relleno y sin contar el byte de Report ID. Esto es una validación estructural
+limitada, no prueba de que el mapa esté completo.
+
+La misma captura contiene únicamente las tres solicitudes de lectura del
+atributo `0x0042` y sus respuestas. No contiene lecturas de Report Reference
+`0x2908`: no se pueden extraer de ella los seis pares (Report ID, tipo) ni
+afirmar que esos dos IDs cubran todas las características Report. No se
+encontró `jx05-amplio.xml` al buscar `jx05*.xml` en Documents y Downloads.
+
+**Resultado de esta comprobación:** «trae bytes distintos», no «repetición del
+mapa». Se bloquea la hipótesis de usar ya un mapa fijo de 126 bytes. Tampoco
+se concatenará automáticamente la respuesta anómala: antes hay que determinar
+qué bytes son válidos y contrastarlos con los Report Reference. No se pasó a
+la instalación de herramientas ni a un filtro activo. El usuario expresó
+preferencia por evitar instalaciones de SDKs.
+
+### Fase 0: resultado con la captura original
+
+Se encontró `C:\Users\TECH\Desktop\jx05-amplio.xml`. Esto resuelve la búsqueda
+pendiente: no estaba en Documents ni Downloads. Se reanalizó sin cambiar el
+controlador, el arranque ni instalar dependencias.
+
+Antes se intentó la lectura nativa de Report Reference desde caché. Se
+enumeraron los siete descriptores, pero `BluetoothGATTGetDescriptorValue`
+devolvió `0x80070005` para todos: **0/7 valores accesibles por esa vía**. El
+registro está en `.jx05-monitor/report-references.log`. No se debe confundir
+ese resultado con los valores recuperados posteriormente de la captura ATT.
+
+En la captura original se emparejaron solicitudes/respuestas de descubrimiento
+de características, descubrimiento de descriptores y lectura de valores. Los
+Report Reference `0x2908` contienen estos pares reales:
+
+| Report (handle de valor) | Descriptor | Bytes del valor | Report ID | Tipo |
+| --- | --- | --- | ---: | --- |
+| `0x0027` | `0x0029` | `01 01` | 1 | Input |
+| `0x002B` | `0x002D` | `02 01` | 2 | Input |
+| `0x002F` | `0x0030` | `01 02` | 1 | Output |
+| `0x0032` | `0x0034` | `03 01` | 3 | Input |
+| `0x0036` | `0x0038` | `04 01` | 4 | Input |
+| `0x003A` | `0x003C` | `05 01` | 5 | Input |
+| `0x003E` | `0x0040` | `06 01` | 6 | Input |
+
+Las lecturas ocurrieron entre 10:15:28.3826609 y 10:15:29.0429387 UTC−03:00.
+No se dedujeron IDs de los handles. El Report de salida es el séptimo Report,
+sin notificaciones; los otros seis son los notificables.
+
+El parser mínimo incorporado a `tools/analyze_att.py` comprueba límites de
+ítems cortos (el tamaño codificado como 3 significa 4 bytes), Collection/End
+Collection, Report ID/Size/Count y Push/Pop global. Rechaza ítems truncados,
+ítems largos no soportados, main items reservados y pilas sin cerrar. No es
+un validador completo de semántica HID. Sigue el formato de la
+[especificación HID 1.11, secciones 6.2.2.2 y 6.2.2.7](https://www.usb.org/sites/default/files/hid1_11.pdf).
+
+Resultado del prefijo:
+
+- 126 bytes; tres colecciones abiertas y cerradas.
+- Input ID 1: 32 bits; Input ID 3: 24 bits, incluyendo relleno y excluyendo el
+  byte Report ID.
+- No define Input IDs 2, 4, 5, 6 ni Output ID 1, presentes en la tabla GATT.
+
+Las siete respuestas al desplazamiento 126 de la captura original tienen
+126 bytes de valor cada una, con **dos variantes distintas**. Ninguna es igual
+al prefijo ni una rotación cíclica de él. Concatenar cualquiera al prefijo
+produce `Reserved main item at 126`. La respuesta posterior capturada a las
+12:27 tampoco es repetición ni rotación. No basta con llamar «bytes nuevos»
+a ese contenido y darlo por continuación válida: puede estar corrupto. Tampoco
+la discrepancia con Report Reference permite saber cuáles características
+emiten realmente datos al pulsar botones.
+
+**Decisión:** «trae bytes distintos; mapa completo aún no reconstruido».
+No se pasa a la Fase 2/3 del filtro con un mapa fijo. Para continuar hace falta
+una fuente válida de las definiciones ausentes o una captura que permita
+recuperarlas; no se inventarán longitudes ni IDs de informe para rellenarlas.
+
+Pruebas y reproducción:
+
+- `tests/fixtures/jx05_report_map.json`: valores reales de las tres respuestas
+  de la captura posterior, con procedencia y SHA-256 de su ETL.
+- `tests/fixtures/jx05_att_phase0.json`: 76 mensajes ATT seleccionados de la
+  captura original (MTU, enumeración HID, referencias y mapa), con SHA-256 del
+  XML; no incluye SMP ni datos de otros servicios.
+- Las pruebas verifican los siete pares anteriores, las cinco definiciones
+  ausentes, las siete respuestas superiores al MTU, el parser HID y el manejo
+  de datos truncados/denegados. **24 pruebas pasaron.**
+- `analyze_att.py` ahora informa `report_references`, `report_map_structure` y
+  `references_missing_from_prefix`. Si no se capturó negociación MTU, informa
+  `null`; no supone MTU 23 ni declara una violación basándose en esa suposición.
+- `probe_gatt_session.py --native-references` permite reproducir la consulta
+  de caché cuando se recibe un anuncio; no la confunde con lectura ATT real.
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' tools/analyze_att.py 'C:\Users\TECH\Desktop\jx05-amplio.xml' --handle 0x200
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -v
+```
+
 ## Reproducir el análisis sin nuevas capturas
 
 Desde la raíz del repositorio, con Python 3.9 o posterior:
@@ -596,3 +728,380 @@ Verificación realizada: tres pruebas de reensamblado correctas; el archivo real
 produce MTU 64, atributo 0x42, prefijo de 126 bytes, 21 respuestas de lectura del
 mapa y siete respuestas que exceden el MTU. Esto valida el análisis local, no un
 driver ni el funcionamiento del anillo en Windows.
+
+## Implementación del observador AE02/AE42 — 5 de noviembre, 13:35
+
+Alcance: `tools/monitor_jx05.py`, sus pruebas, `tools/monitor_logon.ps1` y la
+documentación. Los analizadores y pruebas de la fase HID previa se conservaron.
+Se retiraron del monitor las llamadas a selección automática de controlador y
+al registro nativo HID; la herramienta manual de controladores sigue separada.
+
+El monitor usa Bleak 2.1.1 ya instalado. En cada conexión solicita descubrimiento
+sin caché y selecciona UUID completos AE02/AE42 con propiedad notify/indicate.
+Pasa el objeto actual a `start_notify`, según la
+[API oficial de Bleak](https://bleak.readthedocs.io/en/latest/api/client.html#bleak.BleakClient.start_notify).
+No fija handles ni escribe comandos propietarios. La habilitación estándar de
+notificaciones GATT sí forma parte de la suscripción. Registra servicio, UUID,
+handle, propiedades, aceptación/error y cada paquete con hora UTC y bytes.
+`ESCUCHANDO` significa suscripción, nunca botón identificado.
+
+Conserva el mutex por sesión, estado JSON atómico, registro rotativo (2 MB más
+dos copias), consulta y parada. Reconecta con espera 2/4/8/16/32/60 segundos;
+tras una conexión de al menos 60 segundos vuelve a 2. Parar cancela también
+escaneo/suscripción y libera el cliente. Si ninguna suscripción se acepta,
+permanece `BLOQUEADO` hasta desconexión o parada, sin probar otro controlador.
+
+Evidencia real local (`.jx05-monitor/events.log`, excluido de Git):
+
+- 13:31:43: finalizó el monitor anterior; `running=false` antes de sustituirlo.
+- 13:34:53: inició el observador oculto con PID 15984 usando `pythonw.exe`.
+- 13:35:24: `BleakDeviceNotFoundError`, dirección B7:FC:01:C6:F3:7E no encontrada.
+- 13:35:43: parada confirmada, `running=false`, cero suscripciones y paquetes.
+- Se pidió al usuario encender y confirmar. No se pidió pulsar botones ni se
+  avanzó a una prueba física posterior sin esa respuesta.
+
+Se preparó el inicio al iniciar sesión mediante una tarea **JX05 Monitor** para
+el usuario actual, con token interactivo y privilegios limitados, ejecutando
+`pythonw.exe`. No se registró ninguna tarea ni se cambió el arranque. El script
+incluye desinstalación y `-WhatIf`, y no sobrescribe tareas existentes.
+La desinstalación quita el inicio automático; para cerrar un monitor ya iniciado
+se usa primero `--stop`. Los registros se conservan.
+
+Validación: **28 pruebas Python aprobadas**, incluyendo reconexión simulada con
+objetos/handles nuevos, permisos denegados, suscripción parcial, repetidos y
+liberación conservados sin interpretación, parada y límite de espera progresiva.
+La prueba PowerShell `tests/test_monitor_logon.ps1` pasó con cmdlets simulados y
+comprobó que `-WhatIf` no realiza operaciones. No se validó el registro real:
+la construcción inicial de objetos CIM devolvió acceso denegado en este entorno;
+el modo `-WhatIf` final evita consultar CIM. Se comprobó `git diff --check`.
+
+Pendiente, condicionado al hardware: recibir y correlacionar un botón cada vez,
+identificar liberación/gesto completo, implementar Right/Left mediante SendInput
+con habilitación explícita y una acción por pulsación, y dejar el centro sin
+asignar. No se añadieron códigos de botón supuestos ni una opción de presentador
+que finja funcionar; `presenter_enabled` permanece falso.
+
+No se realizaron los diez avances/diez retrocesos en PowerPoint, xaringan y
+Google Slides, ni los cinco minutos de uso ni recuperación física tras apagar y
+encender. Los paquetes repetidos de las pruebas son datos sintéticos, no una
+calibración del anillo. Si la captura preparada no arroja datos correlacionados,
+se documentará y se detendrá esta vía, sin cambiar automáticamente de driver.
+
+### Suscripción real lograda fuera del entorno restringido — 13:41
+
+Tras confirmar el usuario que el anillo estaba encendido, los intentos dentro
+del sandbox continuaron con `BleakDeviceNotFoundError`. Una consulta PnP de
+solo lectura también devolvió acceso denegado. Se detuvo ese proceso y se
+repitió la ejecución del mismo observador fuera del sandbox, sin cambiar
+controladores. PnP mostró JX-05 presente y OK. No se debe atribuir el error
+anterior necesariamente al escaneo: Bleak usa el mismo tipo de error cuando
+Windows no entrega el objeto BluetoothLEDevice.
+
+A las 13:41:02 el PID 29788 confirmó:
+
+| Servicio | Característica | Handle actual (decimal / hex) | Resultado |
+| --- | --- | --- | --- |
+| AE40 | AE42 | 77 / 0x004D | SUSCRITO, notify |
+| AE00 | AE02 | 131 / 0x0083 | SUSCRITO, notify |
+
+El estado pasó a CONNECTED/ESCUCHANDO, sin error y con cero paquetes. Solo
+entonces se pidió pulsar y soltar una vez el botón superior y confirmar.
+La aceptación de suscripciones no demuestra que estos servicios lleven botones.
+
+Se verificó además el mutex con una segunda ejecución real: terminó con
+`Ya existe un monitor activo` antes de abrir otra conexión. El proceso original
+conservó la captura. La prueba del botón superior permanece pendiente de la
+confirmación del usuario; el silencio mientras se espera no cuenta como una
+prueba de pulsación sin datos.
+
+### Resultado de las pulsaciones confirmadas — 13:44
+
+El usuario confirmó: «pulse el de la derecha, despues el de arriba y despues
+el de arriba». No fue una prueba aislada por botón; se conserva esa secuencia
+exacta como límite de la evidencia. A las 13:44:11 el estado seguía
+CONNECTED/ESCUCHANDO en ambas características, `error=null`, `packets=0` y
+`last_packet=null`. No se registraron desconexiones durante la escucha ni
+notificaciones de ninguna de las pulsaciones comunicadas.
+
+**Resultado: ninguna notificación correlacionada con la secuencia probada.**
+Esto no demuestra que los servicios nunca puedan transportar botones bajo otro
+protocolo, pero no proporciona datos para mapearlos y no se enviarán comandos
+propietarios desconocidos para intentar activarlos. Se detuvo esta vía según
+el plan: a las 13:44:29 el monitor confirmó `running=false`, cero suscripciones
+activas y conexión liberada. No se cambió de driver ni se registró autoarranque.
+
+La infraestructura de observación queda implementada y probada; SendInput,
+calibración por gesto y las validaciones en presentaciones permanecen bloqueados
+por falta de paquetes identificados. No se considera resuelto el objetivo.
+
+### Error de controlador comunicado después de la parada
+
+El usuario informó que apareció un error de controlador y el dispositivo se
+salió. La consulta PnP posterior confirmó una instancia HID nueva
+`A&49E30AC&1F&0023`, presente, con `hidbthle.inf`, código 10 y estado decimal
+3221225701 (`0xC00000E5`). Los servicios AE00/AE40 y el nodo Bluetooth principal
+aparecieron presentes y OK; ese estado PnP no prueba una conexión de radio activa.
+
+Cronología de Kernel-PnP/Configuration consultada, hora local:
+
+- 13:39:17–18: se eliminaron los nodos anteriores `1E` y el nodo del anillo.
+- 13:39:32–36: se crearon los nodos nuevos `1F`; Windows seleccionó
+  `hidbthle.inf` para HID (evento 400), que falló a las 13:39:35 (evento 411,
+  problema `0xA`, estado `0xC00000E5`). AE00 y AE40 iniciaron correctamente.
+- 13:41:02: el observador consiguió ambas suscripciones propietarias pese al
+  fallo HID; no capturó paquetes con las pulsaciones comunicadas.
+- 13:44:29: se detuvo deliberadamente el observador y se liberó su conexión.
+
+El fallo HID documentado precede a la parada: no es un nuevo error de inicio
+causado en ese momento por cerrar el monitor. Liberar GATT deja de mantener la
+conexión de la aplicación; no se dispone de una captura de radio que determine
+el motivo exacto de la desconexión percibida por el usuario. Esta revisión solo
+consultó estado y eventos, sin cambiar controladores ni reiniciar el monitor.
+
+### Desconexión comprobada con captura HCI — 13:57–13:59
+
+Se reprodujo el cierre sin cambiar controladores, con el monitor actualizado y
+una sesión ETW temporal BTHPORT limitada a 64 MB. El monitor debía permanecer
+CONNECTED/ESCUCHANDO 60 segundos; después se solicitó su parada y se observaron
+30 segundos adicionales. La comprobación fallaba explícitamente si se perdía
+la conexión antes de solicitar la parada. El proceso y la sesión ETW terminaron.
+
+| Hora local UTC−03 | Evidencia |
+| --- | --- |
+| 13:57:48.0723481 | HCI LE Connection Complete, estado 0, dirección del anillo B7:FC:01:C6:F3:7E, handle 0x0200 |
+| 13:57:51.6057756 | Monitor PID 33720 con ambas suscripciones, CONNECTED/ESCUCHANDO |
+| 13:58:52.2766589 | Se completaron 60 segundos de observación conectada |
+| 13:58:52.2796585 | Solicitud controlada de parada |
+| 13:58:53.075704 | Monitor guardó running=false y liberó el cliente |
+| 13:58:56.0814605 | El host envió HCI Disconnect para 0x0200, motivo transmitido 0x13 |
+| 13:58:56.2786651 | HCI Disconnection Complete para 0x0200, estado 0, motivo local 0x16 |
+| 13:59:23 | Fin de observación posterior y parada de ETW |
+
+**Resultado:** el enlace permaneció activo con el monitor y Windows ordenó su
+cierre unos tres segundos después de liberarlo. En esta reproducción no fue una
+caída espontánea mientras el monitor mantenía la sesión. El evento local 0x16
+identifica terminación por el host local; que el comando envíe 0x13 al otro lado
+no implica que el anillo iniciara la desconexión. Es el comportamiento descrito
+en la [especificación HCI, comando Disconnect](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+La prueba reproduce el mecanismo; no recupera retrospectivamente el tráfico
+exacto de la desconexión de las 13:44.
+
+PnP mostró que la instancia `1F` había sido eliminada a las 13:56:55 y reemplazada
+por `20` antes de esta prueba. El HID `A&49E30AC&20&0023` falló a las 13:57:12
+con `hidbthle.inf`, código 10, estado `0xC00000E5`: antes del inicio del monitor
+a las 13:57:44. No aparecieron eventos PnP del anillo durante ni después de la
+captura al consultar el canal Configuration. El nodo HID seguía con error y los
+servicios AE00/AE40 figuraban OK. El cierre del enlace y el fallo de inicio HID
+son hechos distintos; mantener GATT conectado no corrige el segundo.
+
+Artefactos locales, excluidos de Git, con prefijo
+`.jx05-monitor/disconnect-20261105-135744`:
+
+- `.etl`: SHA-256 `09b778bf2a864eb85f381c94589ef3243cd51be52d61049863a67b0cb7f7d767`.
+- `.xml`, `.summary.txt`: 142 eventos procesados, 0 perdidos, 140 paquetes BIP.
+  tracerpt avisó de eventos no coincidentes con el esquema; los tres eventos
+  HCI utilizados tienen campos BIP decodificados, longitudes y handle verificables.
+- `.log`: marcas de inicio, conexión, parada y salida del monitor.
+- `.connection.json`: solo conexión/desconexión del handle identificado por
+  dirección; no exporta SMP ni material de emparejamiento.
+- `.pnp.json`: eventos del anillo en Kernel-PnP/Configuration.
+
+El extractor local `analyze_disconnect.py` incluye aserciones para comando,
+evento, dirección y exclusión de paquetes ACL; no se modificó el código del
+monitor en esta comprobación. Se conserva parado. No se instalaron controladores
+ni tareas de inicio; el pasador de diapositivas sigue sin recepción de botones.
+
+### Revisión de una alternativa existente: jx05presenter
+
+Se revisaron directamente las fuentes públicas de
+[savikko/jx05presenter](https://github.com/savikko/jx05presenter), en particular
+[windows/src/main.rs](https://github.com/savikko/jx05presenter/blob/main/windows/src/main.rs)
+y `windows/Cargo.toml` (versión declarada 1.5.1). No se descargó ni ejecutó su
+binario. La versión Windows usa `hidapi::HidApi`, busca por nombre de producto,
+abre una interfaz HID existente y lee informes antes de llamar a SendInput.
+No contiene un transporte GATT alternativo ni una reparación del inicio HID.
+
+Comprobación nativa de solo lectura con HidD_GetHidGuid y Configuration Manager:
+14 interfaces HID presentes; cero candidatas con dirección B7FC01C6F37E o
+VID 05AC / PID 0220. Registro local: `.jx05-monitor/hid-interface-check.txt`.
+Con el controlador del anillo fallando, no se cumple la precondición de esa
+aplicación. Su publicación como compatible con Windows no prueba compatibilidad
+con esta unidad y este fallo de inicio.
+
+Además, su parser Windows presupone como mínimo seis bytes, con X/Y de 16 bits
+en posiciones fijas. El prefijo descriptor de esta unidad describe cuatro bytes
+de payload táctil, con ejes de 12 bits. No se importará ese parser ni sus umbrales
+sin paquetes reales del anillo; el nombre de modelo no basta para igualarlos.
+
+### Hipótesis acotada sobre el límite de la lectura larga
+
+Los 126 bytes anteriores a la respuesta defectuosa son exactamente dos bloques
+de 63 bytes (MTU 64 menos el opcode). Eso también es compatible con un fallo del
+periférico al pedir el bloque siguiente justo al final de su valor. No demuestra
+que 126 sea la longitud correcta: siguen sin explicarse las referencias a otros
+IDs, y no se dispone de una lectura independiente válida.
+
+Si el valor realmente midiera 126 bytes, un MTU 23 permitiría terminar con un
+bloque corto de 16 bytes tras cinco bloques de 22, evitando una solicitud al
+desplazamiento 126. Es una hipótesis para una futura prueba de transporte, no
+una solución implementada. Windows expone
+[GattSession.MaxPduSize](https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattsession.maxpdusize?view=winrt-26100)
+como propiedad de solo lectura y negocia el MTU automáticamente; no se ha
+identificado un ajuste documentado por dispositivo para forzar ese experimento
+con las herramientas actuales. No se alteró el adaptador ni el registro.
+
+La preparación de un controlador propio queda pendiente de aclarar el límite
+explícito del plan «sin SDKs / no instalar drivers». Se solicitó esa aclaración;
+ningún permiso para ampliar herramientas o instalar se presume por silencio.
+El objetivo funcional completo se mantiene: recepción verificada de botones y
+avance/retroceso real en las tres herramientas de presentación.
+
+### Comprobación de registros adicionales de fallo HID
+
+Las consultas de solo lectura no encontraron canales ni proveedores publicados
+con nombre HidOverGatt. `logman query providers` tampoco mostró ese proveedor.
+El canal `Microsoft-Windows-DriverFrameworks-UserMode/Operational` está
+deshabilitado; no se obtuvieron eventos del proveedor UMDF en System para hoy.
+No se habilitaron canales ni se reinició el dispositivo. No hay evidencia
+retrospectiva adicional que permita atribuir con certeza el código 10 al mapa
+HID, frente a otra etapa interna de inicialización. La consulta de procesos no
+encontró python/pythonw activo; el monitor terminó, no es un trabajo pendiente.
+
+Se mantiene el bloqueo para la siguiente etapa: falta aclarar si sigue vigente
+el límite sin SDKs ni drivers. La continuación automática del objetivo no se
+interpreta como respuesta a esa aclaración. No hay paquete de controlador
+preparado, firmado o validado, ni recepción de botones demostrada.
+
+### 2026-11-05: autorización y prototipo propio MTU
+
+El usuario respondió «sí, haz un controladro» a la ampliación para preparar
+un controlador propio y herramientas. Queda superada la restricción previa
+de no instalar SDKs para este desarrollo. No se interpreta como autorización
+para cambiar BCD, reiniciar Windows o intervenir ahora en todo el adaptador.
+
+Se instalaron Build Tools de Visual Studio 2022 (MSVC 14.44.35207 y ASan,
+ambos instaladores terminaron con código 0) y se extrajeron los paquetes
+oficiales NuGet SDK/WDK 10.0.26100.6584 en `.toolchain/`, excluido de Git.
+El bootstrapper tenía firma válida de Microsoft. SHA-256 de los NuGet:
+
+| Paquete | SHA-256 |
+| --- | --- |
+| Microsoft.Windows.WDK.x64 | C393D03DFB640B5C92F546B32F6770EF68CD3AAF691956E7D66D8E2C28A1B55E |
+| Microsoft.Windows.SDK.cpp.x64 | C29CE7A4641CB37EE32EBB8078CC65CFBABC7025076BCFBA869039204B1E960D |
+| Microsoft.Windows.SDK.cpp | 5D31B38205BDD9AC761B4CB39FBBC6B7209B01C11194324AFC674D7D119483A0 |
+
+El BthGATTDump del WDK, ejecutado sin forzar lecturas fuera de caché, identifica
+fabricante `zhuhai_jieli`, modelo `hid_mouse` y versiones `0.0.1`.
+Salida: `.jx05-monitor/wdk-gattdump.txt`. No desbloqueó HID.
+
+El código público de [Jieli ble_hogp.c](https://github.com/Jieli-Tech/fw-AC63_BT_SDK/blob/master/apps/hid/modules/bt/ble_hogp.c)
+asigna inicialmente la longitud total del Report Map; en el caso de un offset
+al final sale sin copiar bytes y conserva esa longitud como retorno. Esto
+ofrece una explicación plausible de la respuesta de 126 bytes al offset 126.
+No demuestra que sea la versión exacta de firmware de este anillo.
+La [tabla GATT del mismo SDK](https://github.com/Jieli-Tech/fw-AC63_BT_SDK/blob/master/apps/hid/modules/bt/ble_hogp_profile.h)
+contiene los seis Input y Output de forma estática, además de los mismos handles
+AE42=0x004e y AE02=0x0084 observados. Las referencias a IDs sin usar pueden
+proceder de esa tabla; ya no bastan por sí solas para descartar un mapa de 126
+bytes. El mapa del ejemplo keypage actual no coincide byte por byte con el
+capturado: no se lo ha usado como sustitución.
+
+Inspección local adicional, sin alterar binarios: los símbolos y desensamblado
+de HidOverGatt muestran que `HidGetReportDescriptor` accede a un objeto ya
+almacenado; `DevicePrepareHardware` realiza inicialización GATT mediante sus
+adaptadores privados. No se ha establecido que un filtro de descriptor HID
+pueda resolver el fallo anterior de lectura. Evidencia local:
+`.jx05-monitor/hogp-symbols.json`, `hogp-disasm.txt` y `read_symbols.py`.
+
+Se implementó una vía distinta y concreta: `driver/jx05mtu.c` es un filtro
+inferior USB KMDF y `driver/mtu.c` limita intercambios ATT Exchange MTU a 23,
+solo después de observar conexión exitosa de B7:FC:01:C6:F3:7E pública. Corrige
+solicitud y respuesta para mantener coherentes los dos extremos. No recorta
+Report Map ni inventa descriptores. El INF de extensión corresponde al
+adaptador observado `USB\VID_13D3&PID_3567&REV_0100&MI_00`.
+
+Esta arquitectura necesita intervenir en la pila del adaptador, aunque sus
+cambios de paquetes se limiten al anillo. Conserva BTHUSB, `oem4.inf` y
+MTKBTFilterX64; no es un reemplazo del controlador base. Se preparó únicamente
+el paquete, sin instalarlo, para someter ese alcance concreto a aprobación.
+Las limitaciones de fragmentación, cancelación/concurrencia y transporte
+están en [driver/README.md](driver/README.md), junto con instalación y reversión.
+
+Verificación realizada:
+
+- Compilación x64 con MSVC `/W4 /WX`, análisis estático `/analyze` sin defectos,
+  NX, CFG y GS. Entrada FxDriverEntry conforme a las props KMDF del WDK.
+- Pruebas C con AddressSanitizer: negociación en ambos sentidos, otras
+  conexiones, truncamientos, desconexión, reutilización de handle, reinicio,
+  eventos no soportados y 100.000 buffers aleatorios/malformados: pasan.
+- InfVerif `/u` y generación de catálogo Inf2Cat Windows 11 24H2 x64:
+  cero errores y cero advertencias.
+- 28 pruebas Python existentes y prueba PowerShell del inicio automático
+  simulado: pasan; no se registró tarea.
+- Firma de prueba de SYS y CAT; firma criptográfica CMS del catálogo verificada.
+  Certificado `8A60B87510907265DD5187EAE3D6799D2123AE64`, raíz no confiable
+  esperada: no se importó a Root ni TrustedPublisher. PFX temporal eliminado.
+  La firma requirió salir del sandbox; no cambió confianza del sistema.
+
+Paquete en `build/jx05mtu/package/`; hashes finales en
+`build/jx05mtu/hashes.json`. SHA-256 SYS firmado:
+`364114EB1204E8B07771CD10EC11DACDE8784247D71EB0D04332B731F75DC7E3`.
+Certificado público en `build/jx05mtu/jx05-test.cer`. Scripts reproducibles
+`driver/build.ps1` y `driver/sign-test.ps1`.
+
+La comprobación final de solo lectura confirmó BTHUSB, `oem4.inf` y únicamente
+MTKBTFilterX64 como LowerFilters; sin `testsigning` en la entrada BCD actual y
+sin el certificado de prueba en los dos almacenes de confianza. No hubo
+reinicio ni cambios de firmware o de inicio de sesión.
+
+**Pendiente:** aprobar habilitar carga de prueba y reiniciar Windows para
+instalar/probar esta extensión sobre el adaptador. Podría interrumpir el ratón
+Bluetooth y un defecto de kernel podría causar pantallazo azul. No se ejecutó
+Driver Verifier ni se ha cargado el prototipo. No hay evidencia de MTU 23 en
+el anillo, desaparición del código 10, recepción de botones ni avance de
+diapositivas. El objetivo funcional sigue sin estar resuelto.
+
+### Autorización de activación y comprobación previa de BitLocker
+
+El usuario autorizó instalar el filtro, habilitar modo de prueba y reiniciar
+Windows. Se verificaron los cuatro hashes del paquete aprobado y el certificado
+8A60B87510907265DD5187EAE3D6799D2123AE64. Se guardó BCD mediante exportación y
+listado, la lista de paquetes y el estado del adaptador en
+`.jx05-monitor/activation-20261105-151900/`. El puntero a esta sesión está en
+`.jx05-monitor/activation-current.txt`.
+
+La consulta detectó C: completamente cifrado, desbloqueado y con protección
+BitLocker activa. Secure Boot está desactivado. El ajuste `testsigning` forma
+parte del [perfil de validación BCD de BitLocker](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/bcd-settings-and-bitlocker).
+Cambiarlo sin preparar BitLocker puede desencadenar recuperación en el arranque.
+Se solicitó autorización adicional y específica para suspender sus protectores
+solo durante un reinicio con reactivación automática. No se solicitó ni se
+extrajo la clave de recuperación. Hasta recibir respuesta, no se cambió BCD,
+no se importó el certificado y no se instaló ni reinició ningún dispositivo.
+
+### BitLocker suspendido y modo de prueba configurado; reinicio pendiente
+
+El usuario autorizó suspender BitLocker y añadió «no reinicies todavía,
+pregunta». Se verificaron de nuevo hashes, certificado, Secure Boot desactivado
+y protección BitLocker inicialmente activa. Se importó el certificado de prueba
+en LocalMachine Root y TrustedPublisher; las firmas de SYS y CAT ahora se
+validan como `Valid` con el thumbprint esperado.
+
+Se ejecutó `Suspend-BitLocker -MountPoint C: -RebootCount 1` y se verificó
+ProtectionStatus=Off y VolumeStatus=FullyEncrypted. Después se configuró
+`bcdedit /set '{current}' testsigning on`; el listado posterior confirma
+`testsigning Yes`. Está configurado para el próximo arranque, no demuestra que
+el modo de prueba esté activo en el kernel actual.
+
+Registro: `.jx05-monitor/activation-20261105-151900/state.json`, etapa
+`awaiting-explicit-restart-confirmation`, y `bcd-after.txt`. No se solicitó ni
+programó reinicio. Tampoco se agregó el paquete al Driver Store ni se instaló
+el filtro: se hará después del arranque en modo de prueba para evitar un fallo
+de firma en la pila Bluetooth actual.
+
+La protección de BitLocker permanece suspendida mientras se espera el reinicio;
+el contador solicitado es uno y debe reanudarse automáticamente al reiniciar.
+Al volver, verificar explícitamente la reanudación de BitLocker, el nuevo
+LastBootUpTime y el modo de prueba antes de instalar el paquete ya autorizado.
+El reinicio requiere ahora confirmación expresa del usuario. No hay todavía
+recepción de botones ni prueba funcional del controlador.

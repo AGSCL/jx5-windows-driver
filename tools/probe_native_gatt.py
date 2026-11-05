@@ -1,4 +1,4 @@
-"""Consulta GATT nativo con handles reales, sin leer valores ni modificar el dispositivo."""
+"""Consulta GATT nativo; references lee solo Report Reference desde la cache de Windows."""
 import ctypes as c
 from ctypes import wintypes as w
 from uuid import UUID
@@ -34,6 +34,73 @@ class Characteristic(c.Structure):
 
 class Registration(c.Structure):
     _fields_ = [("count", c.c_uint16), ("chars", Characteristic * 1)]
+
+
+class Descriptor(c.Structure):
+    _fields_ = [("service", c.c_uint16), ("characteristic", c.c_uint16),
+                ("kind", c.c_int32), ("uuid", LeUuid), ("handle", c.c_uint16)]
+
+
+class CharacteristicFormat(c.Structure):
+    _fields_ = [("format", c.c_ubyte), ("exponent", c.c_ubyte), ("unit", LeUuid),
+                ("namespace", c.c_ubyte), ("description", LeUuid)]
+
+
+class DescriptorValue(c.Structure):
+    # CharacteristicFormat is the largest member of the native anonymous union.
+    _fields_ = [("kind", c.c_int32), ("uuid", LeUuid), ("union", CharacteristicFormat),
+                ("data_size", c.c_uint32), ("data", c.c_ubyte * 1)]
+
+
+def parse_report_reference(raw):
+    end = DescriptorValue.data.offset
+    if len(raw) < end + 2:
+        raise ValueError("Truncated descriptor value")
+    value = DescriptorValue.from_buffer_copy(raw.ljust(c.sizeof(DescriptorValue), b"\0"))
+    if (value.kind != 6 or value.uuid.text() != "00002908-0000-1000-8000-00805f9b34fb"
+            or value.data_size != 2):
+        raise ValueError("Not a two-byte Report Reference")
+    report_id, report_type = raw[end:end + 2]
+    if report_type not in (1, 2, 3):
+        raise ValueError("Invalid Report Reference type")
+    return report_id, report_type
+
+
+def read_report_references(api, handle, chars, emit):
+    api.BluetoothGATTGetDescriptors.argtypes = [w.HANDLE, c.POINTER(Characteristic), c.c_uint16,
+                                               c.POINTER(Descriptor), c.POINTER(c.c_uint16), w.ULONG]
+    api.BluetoothGATTGetDescriptors.restype = c.c_int32
+    api.BluetoothGATTGetDescriptorValue.argtypes = [w.HANDLE, c.POINTER(Descriptor), w.ULONG,
+                                                   c.c_void_p, c.POINTER(c.c_uint16), w.ULONG]
+    api.BluetoothGATTGetDescriptorValue.restype = c.c_int32
+    results = []
+    for char in chars:
+        if char.uuid.text() != "00002a4d-0000-1000-8000-00805f9b34fb":
+            continue
+        descriptors = query_array(api.BluetoothGATTGetDescriptors, (handle, c.byref(char)),
+                                  Descriptor, emit, f"DESCRIPTORES_0x{char.value_handle:04x}")
+        refs = [d for d in descriptors or [] if d.uuid.text() == "00002908-0000-1000-8000-00805f9b34fb"]
+        if len(refs) != 1:
+            emit(f"REFERENCIA_NO_UNICA: report=0x{char.value_handle:04x} cantidad={len(refs)}")
+            continue
+        descriptor = refs[0]
+        required = c.c_uint16()
+        # FORCE_READ_FROM_CACHE: no device read and no CCCD writes.
+        hr = api.BluetoothGATTGetDescriptorValue(handle, c.byref(descriptor), 0, None,
+                                                c.byref(required), 8) & 0xFFFFFFFF
+        emit(f"REFERENCIA_CACHE: report=0x{char.value_handle:04x} descriptor=0x{descriptor.handle:04x} HRESULT=0x{hr:08x}")
+        if hr not in (0, 0x800700EA) or required.value < DescriptorValue.data.offset + 2:
+            continue
+        buf = c.create_string_buffer(required.value)
+        hr = api.BluetoothGATTGetDescriptorValue(handle, c.byref(descriptor), len(buf), buf,
+                                                c.byref(required), 8) & 0xFFFFFFFF
+        if hr or required.value > len(buf):
+            emit(f"REFERENCIA_ERROR: HRESULT=0x{hr:08x}")
+            continue
+        report_id, report_type = parse_report_reference(buf.raw)
+        emit(f"REPORT_REFERENCE: report=0x{char.value_handle:04x} descriptor=0x{descriptor.handle:04x} id={report_id} tipo={report_type} fuente=cache")
+        results.append((char.value_handle, report_id, report_type))
+    return results
 
 
 CALLBACK = c.WINFUNCTYPE(None, c.c_int, c.c_void_p, c.c_void_p)
@@ -101,7 +168,9 @@ def query_array(func, args, item_type, emit, label):
     return list(buf[:count.value])
 
 
-def probe(address, emit=print, register=False):
+def probe(address, emit=print, register=False, references=False):
+    if register and references:
+        raise ValueError("Registro y lectura de referencias son pruebas separadas")
     cfg = c.WinDLL("cfgmgr32")
     cfg.CM_Get_Device_Interface_List_SizeW.argtypes = [c.POINTER(w.ULONG), c.POINTER(Guid), w.LPCWSTR, w.ULONG]
     cfg.CM_Get_Device_Interface_ListW.argtypes = [c.POINTER(Guid), w.LPCWSTR, w.LPWSTR, w.ULONG, w.ULONG]
@@ -120,9 +189,12 @@ def probe(address, emit=print, register=False):
     target = f"{address:012x}"
     success = False
     accepted = 0
+    expected_refs, received_refs = set(), set()
     for label, guid in (("DISPOSITIVO", "781aee18-7733-4ce4-add0-91f41c67b592"),
                         ("SERVICIO", "6e3bb679-4372-40c8-9eaa-4509df260cd8"),
                         ("HID", "00001812-0000-1000-8000-00805f9b34fb")):
+        if references and label != "HID":
+            continue
         paths = [path for path in interfaces(cfg, guid) if target in path.lower()]
         if label == "SERVICIO":
             paths = [path for path in paths if "00001812-0000-1000-8000-00805f9b34fb" in path.lower()]
@@ -130,7 +202,8 @@ def probe(address, emit=print, register=False):
         for path in paths:
             emit(f"INTERFAZ: {path}")
             # El registro se prueba con lectura/escritura; enumerar solo requiere lectura.
-            handle = kernel.CreateFileW(path, 0xC0000000 if register else 0x80000000, 3, None, 3, 0, None)
+            access = 0 if references else (0xC0000000 if register else 0x80000000)
+            handle = kernel.CreateFileW(path, access, 3, None, 3, 0, None)
             if handle == c.c_void_p(-1).value:
                 error = c.get_last_error()
                 emit(f"APERTURA_{label}: WIN32={error} {c.FormatError(error).strip()}")
@@ -155,8 +228,15 @@ def probe(address, emit=print, register=False):
                         if register:
                             emit(f"PRUEBA_REGISTRO: handle de {label}; la API documenta handle de servicio.")
                             accepted += try_register(api, handle, chars, emit)
+                        if references:
+                            expected_refs.update(char.value_handle for char in chars
+                                                 if char.uuid.text() == "00002a4d-0000-1000-8000-00805f9b34fb")
+                            received_refs.update(row[0] for row in read_report_references(api, handle, chars, emit))
             finally:
                 kernel.CloseHandle(handle)
+    if references:
+        emit(f"REFERENCIAS_LEIDAS: {len(received_refs)}/{len(expected_refs)} fuente=cache; no es captura ATT")
+        return 0 if expected_refs and received_refs == expected_refs else 4
     if register:
         emit("REGISTRO_POSIBLE_CCCD_PENDIENTE" if accepted else "REGISTRO_NO_DISPONIBLE: no se habilitaron notificaciones.")
         return 0 if accepted else 4

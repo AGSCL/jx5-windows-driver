@@ -87,7 +87,7 @@ async def check_hid_access(device, cache_mode, emit=print):
             service.close()
 
 
-async def run(address, check_hid=False, native_hid=False, native_register=False):
+async def run(address, check_hid=False, native_hid=False, native_register=False, native_references=False):
     from winrt.windows.devices.bluetooth import BluetoothLEDevice, BluetoothCacheMode
     from winrt.windows.devices.bluetooth.advertisement import (
         BluetoothLEAdvertisementWatcher, BluetoothLEScanningMode)
@@ -140,9 +140,9 @@ async def run(address, check_hid=False, native_hid=False, native_register=False)
                 return 3
             emit = lambda message: print(message, flush=True)
             on_active = (lambda: check_hid_access(device, BluetoothCacheMode.UNCACHED, emit)) if check_hid else None
-            if native_hid or native_register:
+            if native_hid or native_register or native_references:
                 from probe_native_gatt import probe
-                on_active = lambda: asyncio.to_thread(probe, remote_address, emit, native_register)
+                on_active = lambda: asyncio.to_thread(probe, remote_address, emit, native_register, native_references)
             return await monitor(session, emit=emit, on_active=on_active)
         finally:
             session.close()
@@ -160,6 +160,8 @@ def main():
                       help="al activar GATT, comprobar HID mediante la API nativa Win32")
     mode.add_argument("--native-register", action="store_true",
                       help="probar registro nativo de callbacks Report; todavia no habilita CCCD")
+    mode.add_argument("--native-references", action="store_true",
+                      help="leer Report Reference desde la cache de Windows, sin escribir atributos")
     args = parser.parse_args()
     address = None
     if args.address:
@@ -170,7 +172,7 @@ def main():
         except ValueError:
             parser.error("direccion Bluetooth invalida")
     try:
-        return asyncio.run(run(address, args.check_hid, args.native_hid, args.native_register))
+        return asyncio.run(run(address, args.check_hid, args.native_hid, args.native_register, args.native_references))
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
