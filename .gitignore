@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.etl
+jx05-*.xml
+jx05-log-*.txt
