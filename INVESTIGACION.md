@@ -544,6 +544,43 @@ transiciones CLOSED/ACTIVE; a las 12:33:12 volvió a mostrar CONNECTED/ACTIVE,
 con el genérico y `REGISTRO_BLOQUEADO`. La detección de encendido/apagado y la
 recepción de informes HID siguen siendo resultados separados.
 
+### Evaluación previa a instalar un filtro corrector
+
+La petición de instalar y probar un filtro no se completó: no existe aún un
+binario corrector ni un punto de interposición validado. La propuesta anterior
+de un filtro debe entenderse como hipótesis de desarrollo, no como solución
+disponible para instalar.
+
+Se examinó, sin modificarla, la DLL instalada
+`C:\Windows\System32\drivers\UMDF\Microsoft.Bluetooth.Profiles.HidOverGatt.dll`.
+Su firma Microsoft es válida. SHA-256:
+`09648a6511eea778b3b72a149ddbc585422bed55ab35ac19769c6f065bbd61ad`.
+Se descargó del servidor público de símbolos de Microsoft el PDB identificado
+en su registro CodeView, GUID `D8DEDB1DC1834E881FF9E2D62C70FEAB`, edad 1.
+El resultado reproducible de la inspección está en
+`.jx05-monitor/filter-preflight.json` y los símbolos en
+`.jx05-monitor/HidOverGatt.pdb`, ambos excluidos de Git.
+
+Los símbolos contienen `HogpGattAdapter::ReadCharacteristicValue`, cuya firma
+menciona `IGattClientService`, y `_HIDOVERGATTGetReportDescriptor`. La tabla de
+importaciones no contiene llamadas directas `BluetoothGATT*`. Esto identifica
+funciones candidatas para depuración, pero no demuestra qué solicitudes pasan
+por un filtro de dispositivo ni proporciona una interfaz pública para corregir
+las respuestas ATT. No se inyectó código ni se alteró la DLL del sistema.
+
+No se encontraron `cl`, `msbuild`, `inf2cat` o `signtool` en PATH, ni instalaciones
+en las ubicaciones habituales de Visual Studio/Windows Kits examinadas.
+Secure Boot informó `False`; BCD no tiene `testsigning` habilitado. No se
+modificó el arranque. Microsoft documenta que la activación de carga de
+[controladores de kernel con firma de prueba](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option)
+requiere reiniciar; eso sería una etapa posterior a disponer del paquete.
+
+Tampoco está validado un descriptor completo de sustitución. Recortar la
+respuesta o devolver únicamente el prefijo de 126 bytes sería una hipótesis
+adicional: las referencias GATT a otros IDs de informe impiden afirmar que ese
+prefijo describa todos los botones. No se instaló un filtro que finja corregir
+el problema con esos datos incompletos. El monitor y el genérico se conservaron.
+
 ## Reproducir el análisis sin nuevas capturas
 
 Desde la raíz del repositorio, con Python 3.9 o posterior:
