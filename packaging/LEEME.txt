@@ -1,0 +1,66 @@
+JX05 Presenter 0.2.0 - piloto para Windows 11 x64
+
+INSTALACION
+1. Extrae TODO el ZIP. No ejecutes archivos dentro de la vista del ZIP.
+2. Abre Instalar.cmd con tu usuario habitual. Incluye su propio Python y no
+   necesita Anaconda, SDKs ni conexion a Internet para instalarse.
+3. La aplicacion se instala en %LOCALAPPDATA%\Programs\JX05. Se inicia oculta
+   al entrar en Windows y con los controles ACTIVOS.
+4. En Inicio > JX05 tienes Iniciar, Activar, Pausar, Estado y Botones.
+   La configuracion y los registros estan en %LOCALAPPDATA%\JX05.
+
+CONTROLADOR INCLUIDO: COMPATIBILIDAD LIMITADA
+Este piloto es para el anillo B7:FC:01:C6:F3:7E y el adaptador Bluetooth USB
+13D3:3567 rev0100 MI00. No es un controlador universal de JX-05 ni una version
+certificada para distribucion comercial. La aplicacion escucha la interfaz
+vendor corregida; instalar solo la aplicacion no corrige HID en otro PC.
+
+Driver.ps1 sin parametros comprueba el hardware sin modificarlo. Si hace falta
+instalar el controlador, ejecuta Instalar-controlador.cmd como administrador.
+Comprueba adaptador, anillo, integridad del paquete y modo de prueba; muestra
+la operacion antes de agregar el certificado de prueba y el filtro.
+Nunca modifica Secure Boot, BitLocker o el arranque ni reinicia Windows.
+Si Windows no acepta firmas de prueba, se detiene. No desactives protecciones
+solo para distribuir este piloto: para una version normal falta la firma de
+Microsoft y validar otros adaptadores.
+
+Si PnPUtil pide reiniciar, guarda tu trabajo y hazlo manualmente. Windows puede
+conservar el mapa HID anterior: puede ser necesario desemparejar y emparejar
+SOLO el JX-05. Comprueba que no selecciona texto ni cambia volumen por si solo
+antes de usarlo en una presentacion. Un fallo del filtro puede afectar todo el
+adaptador Bluetooth o Windows; conserva los controladores originales del PC.
+
+USO
+Presentacion en primer plano (tambien en edicion): superior/izquierdo retrocede,
+inferior/derecho avanza; central corto entra/sale de presentacion o pantalla
+completa. PowerPoint, Google Slides y xaringan tienen prioridad sobre la musica.
+Mantener una direccion repite. Central >=3 segundos apaga fisicamente el anillo.
+
+Fuera de presentaciones: izquierdo/anterior, derecho/siguiente, central
+pausa/reanuda, superior/inferior volumen de Windows en pasos de 5 puntos.
+VLC 3 esta probado. Se admiten sesiones Windows SMTC musicales, pero aun no se
+han probado otros reproductores. Los navegadores no se controlan como musica.
+VLC usa un control dirigido y supone que el elemento cargado es musica; tambien
+podria controlar un video cargado en VLC. Tiene prioridad sobre otros players.
+Se reconoce xaringan leyendo HTML local o publico, sin cookies ni credenciales.
+Si no se reconoce la pestana, no se envian ordenes. Google Slides en ventana
+y pantalla completa manual F11 no se distinguen de forma fiable.
+
+ACTUALIZAR / DESINSTALAR
+Instalar.cmd actualiza los archivos y conserva botones y registros. Cierra
+el asistente de botones antes de actualizar. Apps instaladas de Windows >
+JX05 Presenter permite quitar la aplicacion y su inicio automatico.
+Se conservan los datos del usuario y el controlador: no se retira un filtro
+de kernel al desinstalar solamente la aplicacion.
+
+Para retirar el controlador, identifica con pnputil /enum-drivers el oemNN.inf
+cuyo nombre original sea jx05mtu.inf y proveedor JX05 local experiment; despues
+usa pnputil /delete-driver oemNN.inf /uninstall como administrador. No borres
+el controlador Bluetooth del fabricante. Reinicia si Windows lo solicita.
+Certificado exclusivo de este piloto: 515214F5FB0AA25C02FC5BD484303F722EC10B35.
+Retiralo de Root y TrustedPublisher solo despues de retirar el filtro.
+
+FUENTES Y LICENCIAS
+Runtime CPython oficial: https://www.python.org/downloads/release/python-3152/
+Licencia redistribuida en runtime/LICENSE.txt.
+Firma de controladores: https://learn.microsoft.com/en-us/windows-hardware/drivers/install/kernel-mode-code-signing-policy--windows-vista-and-later-

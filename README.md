@@ -1,5 +1,34 @@
 # JX-05 como pasador en Windows 11
 
+## Aplicación instalable 0.2.0
+
+Paquete piloto: `build/JX05-0.2.0-win-x64.zip`. Extrae todo y ejecuta
+`Instalar.cmd` con tu usuario habitual. Incluye `JX05.exe`, Python privado,
+el componente de contexto y el controlador firmado de prueba 0.1.0.2.
+No requiere Anaconda ni herramientas de desarrollo en el equipo de destino.
+
+La aplicación se instala en `%LOCALAPPDATA%\Programs\JX05`; datos y mapeo en
+`%LOCALAPPDATA%\JX05`. En Inicio > JX05 están Iniciar, Activar, Pausar, Estado y
+Botones. La tarea **JX05 Monitor inicia con los controles activos** al entrar en
+Windows, según la nueva preferencia del usuario. No hace falta abrir una terminal.
+La instalación y actualización están probadas aquí; se conservó el mapeo.
+La desinstalación de la aplicación conserva datos y controlador.
+
+Este piloto admite **el mismo anillo B7:FC:01:C6:F3:7E** y el adaptador probado
+**USB 13D3:3567 rev0100 MI00**. `Driver.ps1` comprueba compatibilidad sin cambios;
+`Instalar-controlador.cmd`, como administrador, permite instalarlo cuando Windows
+ya está preparado para firma de prueba. Rechaza hardware distinto y no modifica
+Secure Boot, BitLocker ni BCD. La aplicación solo traduce la interfaz vendor
+corregida. Instalar la aplicación sola no corrige el HID original en otro PC.
+
+Para otros adaptadores falta validación y para distribución normal falta firma
+Microsoft. No es todavía un instalador universal o comercial. Consulta
+`packaging/LEEME.txt` para requisitos y retirada del controlador.
+
+Compilación reproducible del paquete: `tools/build_app.ps1`, con el runtime
+oficial fijado y verificado por SHA-256, la DLL ya compilada y el paquete del
+controlador ya firmado. El script no recompila ni vuelve a firmar el kernel.
+
 Prototipo para este anillo y este PC. El filtro 0.1.0.1 permitió iniciar HID y
 recibir botones; el usuario confirmó movimiento de diapositivas en PowerPoint,
 pero aparecieron cambios de volumen y selección de texto. La versión 0.1.0.2
@@ -8,8 +37,10 @@ la colección vendor corregida. El usuario confirmó que mantener el derecho ya
 no selecciona texto/mueve el puntero y mantener el superior no cambia volumen.
 PowerPoint, xaringan y Google Slides pasaron diez avances y diez retrocesos
 cada uno. El usuario confirmó también la función del central en los tres.
-La recuperación tras apagar/encender y la prueba final de repetición siguen
-pendientes en este punto.
+La repetición y la recuperación tras apagar/encender también fueron confirmadas.
+La selección automática dio prioridad a los tres entornos mientras VLC estaba
+abierto. En VLC se confirmaron pausa/reanudación, anterior/siguiente, repetición
+y volumen.
 
 El filtro mantiene el controlador MediaTek existente y corrige la lectura HID.
 El monitor convierte los informes del anillo en teclas de la aplicación en
@@ -30,8 +61,11 @@ Start-Process 'C:\ProgramData\anaconda3\pythonw.exe' -ArgumentList ('"' + $monit
 & 'C:\ProgramData\anaconda3\python.exe' tools/monitor_jx05.py --stop
 ```
 
-Siempre arranca con emisión desactivada. Antes de activarla, pon la presentación
-en primer plano: las teclas van a la ventana activa. Superior/izquierdo
+En ejecución desde el código fuente, `--run` arranca desactivado y
+`--run --enabled` arranca activo. La aplicación instalada usa la segunda opción.
+`--presenter-on` habilita tanto las
+presentaciones como la música residual; `--presenter-off` desactiva ambas.
+Con una presentación reconocida en primer plano, superior/izquierdo
 retroceden; inferior/derecho avanzan. Mantener pulsado repite aproximadamente
 cada 750 ms mientras llegan informes. Soltar detiene la repetición. La
 identificación se basa en ocho capturas confirmadas, no en códigos supuestos.
@@ -39,12 +73,12 @@ identificación se basa en ocho capturas confirmadas, no en códigos supuestos.
 Raw Input escucha en una ventana oculta y sigue los cambios de dispositivos;
 Windows gestiona la reconexión HID. Se descartan gestos incompletos al cambiar
 dispositivo o tras un intervalo sin informes. La recuperación real tras apagar
-el anillo sigue pendiente. El antiguo observador Bleak se conserva como ayuda
+el anillo fue confirmada con el mismo proceso. El antiguo observador Bleak se conserva como ayuda
 de diagnóstico, pero --run ya utiliza HID, no AE02/AE42.
 
 El estado está en `.jx05-monitor/status.json`, y el registro rotativo en
 `.jx05-monitor/events.log` (2 MB, dos copias). Revisa `running`, `updated`,
-`presenter_enabled`, `packets`, `actions`, `error` y `mapping`.
+`presenter_enabled`, `control_context`, `media_available`, `packets`, `actions`, `error` y `mapping`.
 `ESCUCHANDO_HID` acredita el registro de escucha, no que están llegando botones.
 Un mutex evita dos monitores simultáneos. `--stop` debe terminar en running=false.
 
@@ -57,7 +91,8 @@ Un mutex evita dos monitores simultáneos. `--stop` debe terminar en running=fal
 
 El asistente permite asignar avanzar, retroceder o ninguna función a cada
 botón direccional, con el teclado del PC; no hay que pulsar el anillo.
-Guarda `.jx05-monitor/buttons.json`. Para aplicar cambios al monitor activo,
+Guarda `%LOCALAPPDATA%\JX05\buttons.json` en la aplicación instalada o
+`.jx05-monitor/buttons.json` al ejecutar desde el repositorio. Para aplicar cambios al monitor activo,
 desactiva y vuelve a activar el modo presentador. Un mapa inválido impide la
 emisión en lugar de aplicar funciones inesperadas.
 
@@ -66,13 +101,44 @@ Para el central permite guardar una preferencia: entrar/salir de PowerPoint
 (Ctrl+F5; Escape si está a pantalla completa) o alternar
 pantalla completa en xaringan (F). La señal corta del central está calibrada
 con una captura confirmada y se reconoce al completar el par de informes.
-Se debe elegir la
-aplicación apropiada; no existe detección automática. El central empieza sin
+La opción 6 del asistente elige automáticamente según la aplicación en primer
+plano; está seleccionada en este PC. El central empieza sin
 asignar. Mantenerlo tres segundos o más apaga físicamente el anillo, según el
 usuario: no se utiliza como gesto de presentación ni se pide probarlo mantenido.
 En Google Slides la salida se detecta por pantalla completa, no por el contenido
 de la página: no cubre presentaciones en ventana ni distingue el F11 manual del
 navegador. Usa el perfil con la presentación en primer plano.
+
+## Música residual y prioridad automática
+
+PowerPoint y las pestañas reconocidas de Google Slides o xaringan tienen
+prioridad, incluso en edición. Se reconoce PowerPoint por su proceso y las
+pestañas por la URL visible mediante accesibilidad de Windows. Para xaringan
+se lee el HTML local o público buscando marcadores de remark; las consultas
+web no usan cookies ni credenciales y se guardan en memoria durante un minuto.
+No se registran URLs, contenido de páginas ni títulos de canciones. Si no se
+puede identificar una pestaña, el control queda inactivo en ella.
+
+Fuera de las presentaciones, si hay un reproductor compatible abierto con música
+reproduciéndose o pausada: izquierdo/anterior, derecho/siguiente, central corto
+pausa/reanuda y superior/inferior suben/bajan el volumen general de Windows
+en 5 puntos porcentuales, limitado entre 0 y 100. Mantener los direccionales
+repite; el central no repite. Se descartan órdenes al cambiar de ventana,
+desactivar el control o superar un segundo de antigüedad.
+
+La vía general usa sesiones musicales SMTC de Windows y excluye navegadores y
+sesiones de tipo desconocido o vídeo. Los reproductores deben publicar esa
+información. VLC 3 usa una vía específica de mensajes dirigidos a su ventana,
+pues no publica SMTC: se admite una única ventana VLC con un elemento cargado
+y título predeterminado. En VLC se supone que el elemento es música; esta vía
+no inspecciona el tipo del archivo y también podría controlar un vídeo cargado.
+VLC tiene prioridad si coexiste con otro reproductor; no se envían teclas
+multimedia globales para cambiar pistas o pausar.
+
+`tools/context_windows.cpp` es un componente de usuario, no un nuevo controlador.
+`tools/build_context.ps1` lo compila con las herramientas ya presentes y deja
+`build/context/jx05_context.dll`. Debe acompañar al monitor. No requiere reinicio
+ni cambios de BitLocker. Detén el monitor antes de recompilarlo.
 
 Fuentes de los atajos: [PowerPoint](https://support.microsoft.com/en-us/accessibility/powerpoint/use-keyboard-shortcuts-to-deliver-powerpoint-presentations),
 [Google Slides](https://support.google.com/docs/answer/1696717/keyboard-shortcuts-for-google-slides-computer),
@@ -80,11 +146,14 @@ Fuentes de los atajos: [PowerPoint](https://support.microsoft.com/en-us/accessib
 
 ## Inicio de sesión y verificación
 
-No hay tarea de inicio instalada. `tools/monitor_logon.ps1` prepara la tarea
-por usuario JX05 Monitor, sin consola ni elevación. Requiere autorización antes
-de registrarla. Se puede revisar con `-Action Install -WhatIf`; tras aprobación,
+La tarea de inicio JX05 Monitor quedó registrada con autorización del usuario,
+sin consola ni elevación, apuntando a la aplicación instalada con `--run --enabled`.
+`tools/monitor_logon.ps1` permite administrarla.
+Se puede revisar con `-Action Install -WhatIf`; tras aprobación,
 `-Action Install` registra y `-Action Uninstall` retira solo esa tarea.
-El monitor empieza desactivado también al iniciar sesión.
+La opción `-EnableControls` habilita las órdenes automáticamente al iniciar sesión.
+`-Application` selecciona el ejecutable instalado; se mantiene la opción de Python
+para trabajar desde el código fuente.
 
 ```powershell
 & 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests
@@ -95,7 +164,16 @@ reinicios de contactos durante una pulsación mantenida, mapeo y envío de tecla
 con limpieza de modificadores ante un envío parcial. La compilación del filtro
 incluye pruebas C con AddressSanitizer y análisis estático.
 
-Pendiente: cerrar la prueba de uso/repetición y recuperación tras apagar/encender.
+Pasan 53 pruebas Python con Anaconda y con el Python privado del paquete. Se
+comprobaron además los scripts PowerShell, rechazo de archivos alterados y
+hardware incompatible, instalación, actualización conservando el mapeo y la
+desinstalación con `-WhatIf` (sin borrar).
+
+La sesión de prueba de la selección automática y VLC duró más de cinco minutos
+sin errores registrados. Después se ajustó el paso de volumen a 5 puntos y el
+usuario confirmó que así está bien. Otros reproductores SMTC siguen pendientes de prueba
+física. El arranque de sesión real requiere comprobarse tras un próximo inicio;
+la tarea se probó ejecutándola manualmente sin reiniciar Windows.
 No confundir una prueba de decodificación con una prueba de presentación real.
 
 [Investigación y evidencia](INVESTIGACION.md) · [Filtro, instalación y reversión](driver/README.md)

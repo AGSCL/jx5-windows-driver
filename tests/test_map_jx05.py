@@ -11,7 +11,7 @@ class MappingTests(unittest.TestCase):
             path = Path(folder) / 'buttons.json'
             mapping = load(path)
             self.assertEqual(mapping, DEFAULTS)
-            mapping.update(left='next', upper='none', center='powerpoint')
+            mapping.update(left='next', upper='none', center='present')
             save(mapping, path)
             self.assertEqual(load(path), mapping)
             self.assertEqual(load(path)['right'], 'next')

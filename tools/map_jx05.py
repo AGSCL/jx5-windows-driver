@@ -2,11 +2,16 @@
 import argparse
 import json
 from pathlib import Path
+try:
+    from .paths_jx05 import STATE
+except ImportError:
+    from paths_jx05 import STATE
 
-PATH = Path(__file__).resolve().parents[1] / '.jx05-monitor/buttons.json'
+PATH = STATE / 'buttons.json'
 DEFAULTS = dict(upper='previous', lower='next', left='previous', right='next', center='none')
 LABELS = dict(upper='Superior', lower='Inferior', left='Izquierdo', right='Derecho', center='Central')
 ACTIONS = dict(previous='Retroceder', next='Avanzar', none='Sin asignar',
+               present='Presentar/pantalla completa según la aplicación en primer plano',
                powerpoint='Entrar/salir de presentación en PowerPoint',
                google='Presentar/salir de pantalla completa en Google Slides', xaringan='Pantalla completa en xaringan')
 
@@ -52,8 +57,8 @@ def main():
                     break
                 print('Elige 0, 1, 2 o Enter.')
         print('Central: 0 = Sin asignar; 3 = Entrar/salir PowerPoint; 4 = Presentar Google Slides;')
-        print('5 = Pantalla completa xaringan. Elige según la aplicación que pondrás en primer plano.')
-        choices = {'0': 'none', '3': 'powerpoint', '4': 'google', '5': 'xaringan'}
+        print('5 = Pantalla completa xaringan; 6 = Automático según la aplicación en primer plano.')
+        choices = {'0': 'none', '3': 'powerpoint', '4': 'google', '5': 'xaringan', '6': 'present'}
         while True:
             answer = input(f'Central [{ACTIONS[mapping["center"]]}]: ').strip()
             if not answer:
@@ -61,7 +66,7 @@ def main():
             if answer in choices:
                 mapping['center'] = choices[answer]
                 break
-            print('Elige 0, 3, 4, 5 o Enter.')
+            print('Elige 0, 3, 4, 5, 6 o Enter.')
         save(mapping)
         print('Guardado. Desactiva y activa el modo presentador para aplicar el mapa.')
     for button, action in mapping.items():

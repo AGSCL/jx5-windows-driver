@@ -37,10 +37,10 @@ class Classifier:
         if not url:
             return 'unknown'
         parsed = urlsplit(url)
-        if parsed.hostname == 'docs.google.com' and parsed.path.startswith('/presentation/'):
+        if parsed.scheme in ('https', 'http') and parsed.hostname == 'docs.google.com' and parsed.path.startswith('/presentation/'):
             return 'google'
         if parsed.scheme not in ('http', 'https', 'file'):
-            return 'other'
+            return 'other' if parsed.scheme in ('about', 'chrome', 'edge') else 'unknown'
         key = urldefrag(url)[0]
         now = time.monotonic()
         if key in self.cache and now - self.cache[key][0] < 60:
@@ -87,8 +87,10 @@ class Windows:
         self.dll = c.CDLL(str(ROOT / 'build/context/jx05_context.dll'))
         self.dll.JxForeground.argtypes = [c.POINTER(Foreground)]
         self.dll.JxForeground.restype = c.c_int32
-        self.dll.JxMedia.argtypes = [c.c_int]
+        self.dll.JxMedia.argtypes = [c.c_int, c.c_uint64]
         self.dll.JxMedia.restype = c.c_int32
+        self.dll.JxVolume.argtypes = [c.c_int]
+        self.dll.JxVolume.restype = c.c_int32
         self.user = c.WinDLL('user32')
         self.user.GetForegroundWindow.argtypes = []
         self.user.GetForegroundWindow.restype = w.HWND
@@ -103,10 +105,18 @@ class Windows:
             raise RuntimeError(f'Foreground HRESULT={result & 0xffffffff:08x}')
         return value
 
-    def media(self, command=0):
-        result = self.dll.JxMedia(command)
+    def media(self, command=0, window=0):
+        result = self.dll.JxMedia(command, window)
         if result < 0:
+            if command == 0:
+                return 0  # An unavailable media broker must not disable presentation controls.
             raise RuntimeError(f'Media HRESULT={result & 0xffffffff:08x}')
+        return result
+
+    def volume(self, direction=0):
+        result = self.dll.JxVolume(direction)
+        if result < 0:
+            raise RuntimeError(f'Volume HRESULT={result & 0xffffffff:08x}')
         return result
 
 
@@ -148,6 +158,10 @@ class Router:
                 request = self.requests.get(timeout=.5)
             except queue.Empty:
                 request = None
+            with self.lock:
+                enabled = self.enabled
+            if not enabled:
+                continue
             try:
                 foreground = self.native.foreground()
                 context = self.classifier.classify(foreground.process, foreground.url)
@@ -170,11 +184,24 @@ class Router:
                 action = choose_action(context, button, mapping, media)
                 if action == 'none':
                     continue
+                if foreground.url:
+                    current_foreground = self.native.foreground()
+                    if (current_foreground.window, current_foreground.url) != (foreground.window, foreground.url):
+                        self.results.put(dict(kind='skipped', reason='changed-tab'))
+                        continue
+                with self.lock:
+                    if not self.enabled or generation != self.generation or self.closed.is_set():
+                        continue
+                if time.monotonic() - started > 1 or window != self.native.window():
+                    self.results.put(dict(kind='skipped', reason='stale-focus'))
+                    continue
                 commands = {'track-previous': 1, 'track-next': 2, 'play-pause': 3}
                 if action in commands:
-                    if not self.native.media(commands[action]):
+                    if not self.native.media(commands[action], window):
                         self.results.put(dict(kind='skipped', reason='media-control-unavailable'))
                         continue
+                elif action in ('volume-up', 'volume-down'):
+                    self.native.volume(1 if action == 'volume-up' else -1)
                 else:
                     self.send_key(action)
                 self.results.put(dict(kind='action', button=button, action=action, context=context))

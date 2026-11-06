@@ -1292,3 +1292,122 @@ una pulsación del derecho avanzó exactamente una vez en Google Slides.
 El inicio automático se revisó con `monitor_logon.ps1 -Action Install -WhatIf`;
 no existía tarea JX05 Monitor. Se solicitó la confirmación prevista antes de
 registrarla. Falta cerrar el periodo final de uso de cinco minutos.
+
+### Selección automática y música residual (2026-11-05, noche)
+
+El usuario amplió el alcance: presentación prioritaria siempre que PowerPoint,
+xaringan o Google Slides estén en primer plano, incluso en edición. Fuera de
+ellos: izquierdo/anterior, derecho/siguiente, central pausa/reanuda (también
+desde pausa), superior/inferior volumen; mantener direcciones repite. xaringan
+se usa local y en webs públicas. Por ahora se excluyen reproductores de navegador.
+
+Se añadió un hilo de selección al monitor y un componente C++ de usuario,
+compilado con las herramientas existentes, sin modificar el filtro ni BitLocker.
+La URL de la pestaña se consulta por accesibilidad; HTML local/público permite
+identificar remark. Ventanas desconocidas quedan inactivas. Las órdenes se
+invalidan al desactivar, cambiar de ventana/dispositivo o caducar. Las sesiones
+SMTC admiten únicamente tipo Music y procesos ajenos a los navegadores.
+
+VLC instalado es 3.0.24 y no presentó sesión SMTC. Se añadió una vía dirigida
+WM_APPCOMMAND, confirmada en el código oficial de VideoLAN:
+https://raw.githubusercontent.com/videolan/vlc/3.0.x/modules/gui/qt/main_interface_win32.cpp
+Solo se admite una ventana de vlc.exe con título predeterminado de elemento
+cargado. No se inspecciona si ese elemento es audio o vídeo: el usuario debe
+usar VLC con música. VLC tiene prioridad sobre las sesiones SMTC si está cargado.
+No se instalaron plugins ni se cambiaron opciones de VLC.
+
+Una sonda inicial quedó detenida al liberar objetos COM locales al hilo al
+salir. Se eliminó ese almacenamiento y se acotó la vida COM a cada llamada.
+La sonda nueva terminó normalmente y detectó VLC sin acciones. Se apartó la
+DLL antigua bloqueada a build/context/jx05_context-old.dll. La DLL actual tiene
+SHA256 EB4A87E10B2E97228F22091AA8259644C362B539A00A56589F00857AB29176D5.
+49 pruebas Python pasan: prioridad, mapeo, páginas locales/web, fallo de consulta,
+anulación de órdenes en vuelo, música pausada, volumen y regresiones HID.
+
+Se detuvo PID10308 y se inició oculto PID5364 con emisión desactivada, mapa
+central=present. El usuario pidió continuar probando antes de descansar; se
+activó el control. A las 22:13:51 y 22:13:55 se registraron dos play-pause y el
+usuario confirmó que VLC pausa/reanuda. Pistas, volumen y prioridad automática
+siguen en validación. La vía SMTC de otros reproductores aún no se ha probado
+físicamente; una consulta sin VLC devolvió timeout, por lo que no se da por
+validada esa compatibilidad.
+
+El usuario confirmó anterior/siguiente en VLC, repetición del derecho durante
+tres segundos y parada al soltar, y superior/inferior para volumen. Manteniendo
+VLC abierto, confirmó el cambio automático a Google Slides, xaringan y
+PowerPoint: central y avance operaron únicamente en la presentación. El registro
+coincide con los contextos google, xaringan y powerpoint. PID5364 operó desde
+22:12:50 hasta 22:18, con más de cinco minutos de pruebas y sin errores.
+
+El usuario autorizó registrar JX05 Monitor al iniciar sesión. Se instaló la
+tarea Interactive/Limited para Andresito, sin consola y con emisión inicialmente
+desactivada. Se detuvo el monitor anterior y se inició desde la tarea: PID14376
+arrancó desactivado, luego recibió acciones al habilitarlo. No se reinició Windows.
+
+El usuario indicó que el superior subía poco el volumen. El registro mostraba
+órdenes correctas; pidió explícitamente pasos de 5 puntos porcentuales. Se
+sustituyeron las teclas de volumen por IAudioEndpointVolume sobre la salida
+multimedia predeterminada de Windows, con límites 0..100. No se cambia el volumen
+interno de VLC ni se modifica el estado de silencio. Se añadió lectura de volumen
+para diagnóstico. También se corrigió la consulta de un servicio SMTC no disponible:
+ahora equivale a no tener reproductor, sin desactivar las presentaciones; los
+errores al ejecutar órdenes siguen desactivando el control.
+
+Compilación /W4 /WX correcta, DLL SHA256
+4C5D0C1A810480033154D7AEBBF09254C8FF696CAC607FAB7C0886B7CD15792F.
+Pasan 51 pruebas Python, incluyendo cambio de pestaña en la misma ventana,
+consulta multimedia fallida, volumen y regresiones anteriores. La tarea se volvió
+a iniciar sin duplicados: PID8140, emisión inicialmente desactivada. Tras
+habilitarla, el usuario confirmó «Sí, así está bien» para el paso de volumen.
+La lectura inicial era 10%; tras una subida, dos bajadas y otra subida, volvió
+a 10%, coherente con las cuatro acciones registradas. Hubo más pruebas manuales
+de volumen posteriores, sin errores. El monitor queda activo y habilitado.
+
+Quedan como límites de validación: otros reproductores SMTC y un inicio real
+de sesión de Windows; la tarea sí fue probada manualmente con permisos normales.
+No se solicitó otro reinicio ni se volvió a suspender BitLocker.
+
+### Aplicación instalable e inicio activo (2026-11-05)
+
+El usuario pidió que arrancase sola y activa, y convertirla en un programa con
+su controlador para instalar en otros computadores. Aclaró «Mi mismo anillo
+primero». Esta preferencia sustituye el arranque desactivado acordado anteriormente.
+No se generalizó el filtro a hardware desconocido: siguen fijados el anillo y el
+HWID del adaptador probado. Se explicó que para distribución normal falta firma
+Microsoft y validación de otros adaptadores.
+
+Se creó el paquete piloto 0.2.0: JX05.exe (lanzador nativo), runtime CPython privado
+3.15.2 x64, módulos existentes, DLL de contexto y driver 0.1.0.2 ya firmado.
+Runtime descargado desde python.org y verificado contra SHA256 publicado
+D012F3AA29CF07436DAE8AEA1FEC0FD195C2612A0B059B1F915AE0AFB9AD1F62.
+Incluye licencia Python. No se instaló Python global ni se compiló/modificó el
+kernel. El programa no requiere Anaconda ni el repositorio en el PC de destino.
+
+Install.ps1 comprueba integridad, instala por usuario, conserva mapeo, crea
+accesos en Inicio y registro de desinstalación y registra la tarea sin elevación.
+El driver se comprueba/instala separadamente con Driver.ps1: verifica hardware,
+anillo, hashes y modo de prueba; requiere administrador y confirmación explícita
+para importar su certificado e instalar. No cambia BCD, BitLocker ni Secure Boot,
+y no reinicia Windows. Se confirmó en solo lectura que el driver cargado coincide
+con el paquete; no se reinstaló. El monitor solo registra ahora la colección
+vendor FF00:0001; la captura de diagnóstico conserva las colecciones antiguas.
+
+Pasan 53 pruebas Python con el entorno anterior y con el runtime incluido, más
+las pruebas PowerShell de inicio, sintaxis de instaladores, WhatIf, rechazo de
+binario modificado y hardware desconocido. Se instaló realmente en
+%LOCALAPPDATA%\Programs\JX05, con datos en %LOCALAPPDATA%\JX05. Se migró buttons.json.
+Se probó también la actualización: conserva exactamente el hash del mapeo,
+detiene el monitor previo y vuelve a iniciarlo. Desinstalación comprobada con
+WhatIf; no se borraron archivos. La aplicación desinstalada conservaría datos
+y controlador; la guía incluye retirada separada del filtro.
+
+La tarea JX05 Monitor apunta a JX05.exe --run --enabled, Interactive/Limited para
+Andresito. El estado mostró started_enabled=true y presenter_enabled=true sin
+enviar después una orden de activación. BitLocker permaneció On. El usuario
+confirmó que el central sigue pausando/reanudando VLC con la aplicación instalada.
+
+Paquete: build/JX05-0.2.0-win-x64.zip, SHA256
+19BBFA8A918BDFED54423F8CF77726A4465413640688107588571B15CE4B032C.
+Baseline anterior al reinicio real en .jx05-monitor/app-reboot-baseline.json;
+tarea exportada en task-installed-app.xml. Se espera el reinicio manual del
+usuario para confirmar un inicio real de sesión; no se da esa prueba por hecha.

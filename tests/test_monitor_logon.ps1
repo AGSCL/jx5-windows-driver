@@ -2,7 +2,8 @@
 $ErrorActionPreference = 'Stop'
 $monitorCalls = [Collections.Generic.List[string]]::new()
 function New-ScheduledTaskAction { param($Execute, $Argument, $WorkingDirectory, $ErrorAction)
-    if ($Execute -notlike '*pythonw.exe' -or $Argument -notmatch '^".+monitor_jx05.py" --run$' -or -not (Test-Path $WorkingDirectory)) { throw 'Accion incorrecta' }
+    if ($Execute -notlike '*pythonw.exe' -or $Argument -notmatch '^".+monitor_jx05.py" --run( --enabled)?$' -or -not (Test-Path $WorkingDirectory)) { throw 'Accion incorrecta' }
+    if ($script:expectEnabled -and $Argument -notmatch ' --enabled$') { throw 'Falta activacion automatica' }
     $monitorCalls.Add('action'); return 'action'
 }
 function New-ScheduledTaskTrigger { param([switch]$AtLogOn, $User, $ErrorAction)
@@ -17,7 +18,7 @@ function New-ScheduledTaskSettingsSet { param($ExecutionTimeLimit, $MultipleInst
     if ($ExecutionTimeLimit -ne [TimeSpan]::Zero -or $MultipleInstances -ne 'IgnoreNew') { throw 'Settings incorrectos' }
     return 'settings'
 }
-function Register-ScheduledTask { param($TaskName, $Action, $Trigger, $Principal, $Settings, $ErrorAction)
+function Register-ScheduledTask { param($TaskName, $Action, $Trigger, $Principal, $Settings, [switch]$Force, $ErrorAction)
     if ($TaskName -ne 'JX05 Monitor' -or $Action -ne 'action' -or $Trigger -ne 'trigger' -or $Principal -ne 'principal' -or $Settings -ne 'settings') { throw 'Registro incorrecto' }
     $monitorCalls.Add('install')
 }
@@ -32,4 +33,6 @@ if ($monitorCalls.Count) { throw 'WhatIf ejecuto operaciones' }
 & $entry -Action Install
 & $entry -Action Uninstall
 if (($monitorCalls -join ',') -ne 'action,install,uninstall') { throw 'Flujo incorrecto' }
+$script:expectEnabled = $true
+& $entry -Action Install -EnableControls
 Write-Output 'OK: inicio y desinstalacion simulados; WhatIf sin operaciones'

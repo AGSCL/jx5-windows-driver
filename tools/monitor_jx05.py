@@ -1,4 +1,4 @@
-"""Monitor HID del JX-05; modo presentador optativo, desactivado al iniciar."""
+"""Monitor HID del JX-05; --enabled habilita los controles al arrancar."""
 import argparse
 import asyncio
 import contextlib
@@ -8,11 +8,13 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-from pathlib import Path
+import queue
 import time
+try:
+    from .paths_jx05 import ROOT, STATE
+except ImportError:
+    from paths_jx05 import ROOT, STATE
 
-ROOT = Path(__file__).resolve().parents[1]
-STATE = ROOT / '.jx05-monitor'
 ADDRESS = 'B7:FC:01:C6:F3:7E'
 TARGETS = {f'0000{uuid}-0000-1000-8000-00805f9b34fb' for uuid in ('ae02', 'ae42')}
 
@@ -181,15 +183,17 @@ def send_key(action):
         raise RuntimeError(f'SendInput aceptó {sent}/{len(batch)} eventos; revisar permisos de la aplicación en primer plano')
 
 
-def run():
+def run(start_enabled=False):
     try:
         from .capture_raw_hid import run as capture_raw
         from .jx05_gestures import Gestures
         from .map_jx05 import load as load_mapping
+        from .context_jx05 import Router
     except ImportError:
         from capture_raw_hid import run as capture_raw
         from jx05_gestures import Gestures
         from map_jx05 import load as load_mapping
+        from context_jx05 import Router
 
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
@@ -202,6 +206,7 @@ def run():
         kernel.CloseHandle(mutex)
         raise RuntimeError('Ya existe un monitor activo.')
     handler = None
+    router = None
     try:
         STATE.mkdir(exist_ok=True)
         (STATE / 'stop').unlink(missing_ok=True)
@@ -212,12 +217,16 @@ def run():
         handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
         logger.addHandler(handler)
         status = {'pid': os.getpid(), 'running': True, 'connection': 'DISCONNECTED',
+                  'started': datetime.now(timezone.utc).isoformat(), 'started_enabled': start_enabled,
                   'capture': 'SIN_SUSCRIPCION', 'subscriptions': [], 'packets': 0,
-                  'last_packet': None, 'presenter_enabled': False, 'retry_seconds': 0, 'error': None,
+                  'last_packet': None, 'presenter_enabled': start_enabled, 'retry_seconds': 0, 'error': None,
                   'actions': 0, 'last_action': None, 'backend': 'raw-input'}
         decoder = Gestures()
         mapping = load_mapping()
         status['mapping'] = mapping
+        status.update(control_context='disabled', media_available=False)
+        router = Router(send_key)
+        router.configure(start_enabled, mapping)
 
         def save():
             status['updated'] = datetime.now(timezone.utc).isoformat()
@@ -231,6 +240,7 @@ def run():
                 status.update(capture='ESCUCHANDO_HID', connection='ESPERANDO_INFORMES')
             elif event == 'device_change':
                 decoder.reset()
+                router.configure(status['presenter_enabled'], mapping)
                 status['connection'] = 'CAMBIO_DE_DISPOSITIVO'
             elif event == 'report':
                 status['packets'] += 1
@@ -241,51 +251,66 @@ def run():
                     action = mapping[button]
                     status['last_button'] = button
                     logger.info('GESTO %s action=%s presenter=%s', button, action, status['presenter_enabled'])
-                    if status['presenter_enabled'] and action != 'none':
-                        try:
-                            send_key(action)
-                        except Exception as exc:
-                            status.update(presenter_enabled=False, error=str(exc))
-                            logger.exception('EMISION_DESACTIVADA')
-                        else:
-                            status['actions'] += 1
-                            status['last_action'] = dict(action=action, time=datetime.now(timezone.utc).isoformat())
+                    if status['presenter_enabled']:
+                        router.submit(button)
             elif event == 'error':
                 status.update(error=fields['detail'], presenter_enabled=False)
+                router.configure(False, mapping)
             save()
 
         def tick():
             nonlocal mapping
+            while True:
+                try:
+                    result = router.results.get_nowait()
+                except queue.Empty:
+                    break
+                logger.info('CONTROL %s', json.dumps(result))
+                if result['kind'] == 'context':
+                    status.update(control_context=result['context'], media_available=result['media_available'])
+                elif result['kind'] == 'action':
+                    status['actions'] += 1
+                    status['last_action'] = dict(result, time=datetime.now(timezone.utc).isoformat())
+                elif result['kind'] == 'error':
+                    status.update(presenter_enabled=False, error=result['detail'])
             command = STATE / 'presenter-command.json'
             if command.exists():
                 request = json.loads(command.read_text(encoding='utf-8'))
                 command.unlink()
                 if request.get('pid') == os.getpid() and type(request.get('enabled')) is bool:
                     decoder.reset()
+                    router.configure(False, mapping)
                     status['presenter_enabled'] = False
                     if request['enabled']:
                         mapping = load_mapping()
                         status['mapping'] = mapping
                     status['presenter_enabled'] = request['enabled']
+                    status['error'] = None
+                    router.configure(request['enabled'], mapping)
+                    if not request['enabled']:
+                        status.update(control_context='disabled', media_available=False)
                     logger.info('PRESENTADOR %s', request['enabled'])
             save()
 
-        logger.info('INICIO: Raw Input; modo presentador desactivado; sin cambios de controlador')
+        logger.info('INICIO: Raw Input; controles=%s; sin cambios de controlador', start_enabled)
         try:
-            capture_raw(on_event=on_event, on_tick=tick, stopped=lambda: (STATE / 'stop').exists())
+            capture_raw(on_event=on_event, on_tick=tick, stopped=lambda: (STATE / 'stop').exists(), vendor_only=True)
         finally:
+            router.stop()
             status['running'] = False
             status['presenter_enabled'] = False
             save()
             logger.info('FIN: lectura HID detenida')
     finally:
+        if router:
+            router.stop()
         if handler:
             logger.removeHandler(handler)
             handler.close()
         kernel.CloseHandle(mutex)
 
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--run', action='store_true')
@@ -293,11 +318,35 @@ if __name__ == '__main__':
     modes.add_argument('--stop', action='store_true')
     modes.add_argument('--presenter-on', action='store_true')
     modes.add_argument('--presenter-off', action='store_true')
+    modes.add_argument('--show-status', action='store_true')
+    modes.add_argument('--self-test', action='store_true')
+    parser.add_argument('--enabled', action='store_true', help='Habilitar controles al iniciar --run')
     args = parser.parse_args()
-    if args.status:
+    if args.enabled and not args.run:
+        parser.error('--enabled requiere --run')
+    if args.self_test:
+        from capture_raw_hid import reports
+        from context_jx05 import Windows
+        from jx05_gestures import Gestures
+        from map_jx05 import load
+        Windows()  # Load DLL and check every exported binding without emitting input.
+        Gestures()
+        load()
+        print('OK: runtime, DLL, HID decoder and mapping')
+    elif args.status or args.show_status:
         path = STATE / 'status.json'
-        print(path.read_text(encoding='utf-8') if path.exists() else 'Sin estado registrado.')
-        print('Comprueba updated: un estado antiguo no garantiza que el proceso siga vivo.')
+        content = path.read_text(encoding='utf-8') if path.exists() else 'Sin estado registrado.'
+        if args.show_status:
+            state = json.loads(content) if path.exists() else {}
+            content = ('Controles: ' + ('activos' if state.get('presenter_enabled') else 'pausados') +
+                       '\nContexto: ' + state.get('control_context', 'sin datos') +
+                       '\nÚltimo estado: ' + state.get('updated', 'sin datos') +
+                       '\nError: ' + str(state.get('error') or 'ninguno') +
+                       '\n\nSi la fecha es antigua, inicia JX05 desde el menú Inicio.')
+            ctypes.windll.user32.MessageBoxW(None, content, 'JX05 - Estado', 0x40)
+        else:
+            print(content)
+            print('Comprueba updated: un estado antiguo no garantiza que el proceso siga vivo.')
     elif args.stop:
         STATE.mkdir(exist_ok=True)
         (STATE / 'stop').touch()
@@ -311,4 +360,13 @@ if __name__ == '__main__':
         pending.replace(STATE / 'presenter-command.json')
         print('Orden enviada; comprobar presenter_enabled en --status.')
     else:
-        run()
+        run(args.enabled)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as exc:
+        STATE.mkdir(parents=True, exist_ok=True)
+        (STATE / 'startup-error.txt').write_text(f'{datetime.now(timezone.utc).isoformat()} {exc}', encoding='utf-8')
+        raise

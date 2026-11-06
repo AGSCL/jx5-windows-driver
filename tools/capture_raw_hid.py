@@ -24,7 +24,7 @@ def emit(event, **fields):
     print(json.dumps(dict(time=datetime.now(timezone.utc).isoformat(), event=event, **fields)), flush=True)
 
 
-def run(on_event=emit, on_tick=None, stopped=None):
+def run(on_event=emit, on_tick=None, stopped=None, *, vendor_only=False):
     emit = on_event
     u, k = c.WinDLL('user32', use_last_error=True), c.WinDLL('kernel32', use_last_error=True)
     pointer = c.c_ssize_t
@@ -124,13 +124,13 @@ def run(on_event=emit, on_tick=None, stopped=None):
         hwnd = u.CreateWindowExW(0, class_name, '', 0, 0, 0, 0, 0, w.HWND(-3), None, instance, None)
         if not hwnd:
             raise c.WinError(c.get_last_error())
-        devices = (Device * 3)(Device(12, 1, 0x2100, hwnd), Device(13, 4, 0x2100, hwnd),
-                               Device(0xff00, 1, 0x2100, hwnd))
-        if not u.RegisterRawInputDevices(devices, 3, c.sizeof(Device)):
+        usages = [(0xff00, 1)] if vendor_only else [(12, 1), (13, 4), (0xff00, 1)]
+        devices = (Device * len(usages))(*(Device(page, usage, 0x2100, hwnd) for page, usage in usages))
+        if not u.RegisterRawInputDevices(devices, len(devices), c.sizeof(Device)):
             raise c.WinError(c.get_last_error())
         if not u.SetTimer(hwnd, 1, 500, None):
             raise c.WinError(c.get_last_error())
-        emit('ready', pid=os.getpid(), presenter_enabled=False)
+        emit('ready', pid=os.getpid(), vendor_only=vendor_only)
         msg = w.MSG()
         while True:
             result = u.GetMessageW(c.byref(msg), None, 0, 0)
