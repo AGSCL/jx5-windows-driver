@@ -1,0 +1,50 @@
+{
+  "source": "v011-bth.etl 2026-11-05, verified HID started; attribute 0x0042 previously enumerated",
+  "etl_sha256": "ca0e320f771a9fb65eda8ac7eaab1b767d32d059780a0b822b92c475a76ad892",
+  "reads": [
+    {
+      "offset": 0,
+      "bytes": 22
+    },
+    {
+      "offset": 22,
+      "bytes": 22
+    },
+    {
+      "offset": 44,
+      "bytes": 22
+    },
+    {
+      "offset": 66,
+      "bytes": 22
+    },
+    {
+      "offset": 88,
+      "bytes": 22
+    },
+    {
+      "offset": 110,
+      "bytes": 16
+    }
+  ],
+  "report_map_hex": "050c0901a1018503150025017501950b09ea09e9093009b509b60aae010a24020a230209cd81029501750d8103c0050d0904a1018501050d0922a102094215002501750195018102093281020947810209517505950115002505810205010930750c9501550e653326e80381020931750c9501550e653326e8038102c0c0",
+  "structure": {
+    "collections": 3,
+    "report_ids": [
+      1,
+      3
+    ],
+    "reports": [
+      {
+        "id": 1,
+        "type": "Input",
+        "bits": 32
+      },
+      {
+        "id": 3,
+        "type": "Input",
+        "bits": 24
+      }
+    ]
+  }
+}

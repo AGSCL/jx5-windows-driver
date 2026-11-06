@@ -3,11 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../driver/mtu.h"
+#include "../driver/report_maps.h"
 
 static const unsigned char connected[] = {
     0x3e,19,1,0,0,2,0,0,0x7e,0xf3,0xc6,1,0xfc,0xb7,6,0,0,0,200,0,0
 };
-static const unsigned char request[] = {0,0x22,7,0,3,0,4,0,2,64,0};
+/* BTHPORT 2026-11-05: Windows offers 527; the ring replies 64. */
+static const unsigned char request[] = {0,0x02,7,0,3,0,4,0,2,0x0f,0x02};
 static const unsigned char response[] = {0,0x22,7,0,3,0,4,0,3,64,0};
 
 static void Connect(JX05_LINK *link)
@@ -17,6 +19,37 @@ static void Connect(JX05_LINK *link)
     assert(link->active && link->handle == 0x200);
 }
 
+static void MapTest(void)
+{
+    JX05_LINK link;
+    unsigned char p[40], seen[126];
+    unsigned offset, count;
+    Connect(&link);
+    for (offset = 0; offset < 126; offset += count) {
+        unsigned char read[] = {0,2,9,0,5,0,4,0,12,0x42,0,0,0};
+        if (!offset) { read[2]=7; read[4]=3; read[8]=10; }
+        read[11]=(unsigned char)offset;
+        assert(Jx05Acl(&link, read, offset ? 13 : 11, 0)==0);
+        count = 126-offset < 22 ? 126-offset : 22;
+        memset(p,0,sizeof(p)); p[1]=0x22; p[2]=(unsigned char)(count+5);
+        p[4]=(unsigned char)(count+1); p[6]=4; p[8]=offset ? 13 : 11;
+        memcpy(p+9,Jx05OriginalMap+offset,count);
+        assert(Jx05Acl(&link,p,count+9,1)==0);
+        memcpy(seen+offset,p+9,count);
+    }
+    assert(link.map_patches==6 && memcmp(seen,Jx05VendorMap,126)==0);
+    /* No unsolicited descriptor rewriting; mismatched maps stay untouched. */
+    Connect(&link);
+    memset(p,0,sizeof(p)); p[1]=0x22; p[2]=27; p[4]=23; p[6]=4; p[8]=11;
+    memcpy(p+9,Jx05OriginalMap,22);
+    assert(Jx05Acl(&link,p,31,1)==0 && memcmp(p+9,Jx05OriginalMap,22)==0);
+    { unsigned char read[]={0,2,7,0,3,0,4,0,10,0x42,0};
+      Jx05Acl(&link,read,sizeof(read),0); }
+    p[9]^=1;
+    Jx05Acl(&link,p,31,1);
+    assert(p[9]==(Jx05OriginalMap[0]^1) && link.map_patches==0 && !link.map_next);
+}
+
 int main(void)
 {
     JX05_LINK link;
@@ -24,6 +57,7 @@ int main(void)
     size_t n;
     unsigned i;
     unsigned long random = 42;
+    MapTest();
     Connect(&link);
     memcpy(p, request, sizeof(request));
     assert(Jx05Acl(&link, p, sizeof(request), 0) == 1 && p[9] == 23);
@@ -33,7 +67,7 @@ int main(void)
     memcpy(p, response, sizeof(response));
     assert(Jx05Acl(&link, p, sizeof(response), 1) == 0 && p[9] == 64);
     /* Peripheral-initiated exchange, and an already-minimal request. */
-    memcpy(p, request, sizeof(request)); p[9] = 23;
+    memcpy(p, request, sizeof(request)); p[9] = 23; p[10] = 0;
     assert(Jx05Acl(&link, p, sizeof(request), 1) == 0);
     memcpy(p, response, sizeof(response));
     assert(Jx05Acl(&link, p, sizeof(response), 0) == 1 && p[9] == 23);
@@ -46,19 +80,19 @@ int main(void)
         case 2: p[8] = 0x12; break;
         case 3: p[2] = 8; break;
         case 4: p[1] = 0x12; break;
-        case 5: p[9] = 22; break;
+        case 5: p[9] = 22; p[10] = 0; break;
         }
         memcpy(original, p, sizeof(request));
         assert(Jx05Acl(&link, p, sizeof(request), 0) == 0);
         assert(memcmp(original, p, sizeof(request)) == 0);
     }
     Connect(&link); memcpy(p, request, sizeof(request)); p[11] = 0;
-    assert(Jx05Acl(&link, p, 12, 0) == 0 && p[9] == 64);
+    assert(Jx05Acl(&link, p, 12, 0) == 0 && p[9] == 0x0f);
     memcpy(p + 11, request, sizeof(request));
     assert(Jx05Acl(&link, p, 22, 0) == 2 && p[9] == 23 && p[20] == 23);
     for (n = 0; n < sizeof(request); ++n) {
         Connect(&link); memcpy(p, request, sizeof(request));
-        assert(Jx05Acl(&link, p, n, 0) == 0 && p[9] == 64);
+        assert(Jx05Acl(&link, p, n, 0) == 0 && p[9] == 0x0f);
     }
     Connect(&link);
     { const unsigned char gone[] = {5,4,0,0,2,0x16}; Jx05Events(&link, gone, sizeof(gone)); }

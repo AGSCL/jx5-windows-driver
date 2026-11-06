@@ -1,178 +1,128 @@
-# JX05 MTU: prototipo experimental para este PC
+# Filtro experimental JX05Mtu para este PC
 
-Existe un controlador KMDF x64 compilado y firmado con un certificado local
-de prueba. **No está instalado ni se ha probado en el kernel. No es todavía
-un pasador de diapositivas.**
+Estado al 2026-11-05: **0.1.0.2 cargado como oem3.inf**, después del segundo
+reinicio autorizado a las 21:06:07. El binario cargado coincide con el SHA-256
+firmado. El emparejamiento del anillo se renovó para descartar el mapa antiguo
+almacenado por Windows. Hay una sola colección vendor FF00:0001, sin errores.
+BitLocker C: está FullyEncrypted / Protection On; testsigning
+permanece activo. Secure Boot ya estaba desactivado y no se modificó.
 
-La hipótesis es evitar la lectura larga defectuosa negociando ATT MTU 23 en
-ambos extremos de la conexión. Si el mapa mide 126 bytes, las respuestas
-serían de 22, 22, 22, 22, 22 y 16 bytes: no se pediría el bloque que empieza
-justo en 126. No se sustituye el descriptor por uno supuesto ni se modifica
-el firmware. Que el anillo responda correctamente con ese MTU sigue pendiente.
+## Corrección y alcance
 
-## Alcance del filtro
+La oferta ATT MTU de Windows observada era 527. El filtro reduce ofertas >=23
+al mínimo 23 para la dirección pública B7:FC:01:C6:F3:7E. Con 0.1.0.1 se obtuvo
+el mapa HID completo de 126 bytes en seis bloques 22/22/22/22/22/16 y desapareció
+el código 10. El mapa declara entrada ID1 de 32 bits e ID3 de 24 bits.
 
-El INF de extensión conserva BTHUSB y el filtro MediaTek existente. Añade un
-filtro inferior USB al hardware `USB\VID_13D3&PID_3567&REV_0100&MI_00`, el del
-adaptador de este PC. Esto afecta a la pila del **adaptador**, aunque el código
-solo cambia los dos bytes de MTU en intercambios ATT de la dirección pública
-`B7:FC:01:C6:F3:7E`. No es un filtro instalado únicamente sobre el nodo del anillo.
+Los botones originales son táctiles y consumer: además de nuestra traducción,
+Windows producía selección de texto y cambios de volumen. 0.1.0.2 sustituye
+los bloques exactos del mapa capturado por una colección vendor FF00:0001 de
+igual longitud, conservando los IDs y tamaños. No modifica informes de botones
+ni firmware. Solo reescribe respuestas a lecturas del atributo 0x0042 en orden,
+con longitud y contenido coincidentes con la captura. La eficacia de este
+cambio se verificó en la captura de seis bloques y en el nuevo nodo HID.
+El usuario confirmó ausencia de selección con derecho mantenido y de cambios
+de volumen con superior mantenido. Falta la validación completa en aplicaciones.
 
-Aprende los pipes de eventos/ACL de la configuración USB. Solo activa la
-corrección al observar una conexión LE exitosa de esa dirección. Desconexión,
-reinicio, reutilización del handle y errores de transferencia invalidan el
-seguimiento. Otros paquetes se reenvían. No expone IOCTL públicos, escribe
-teclas, inicia programas ni cambia el inicio de sesión.
+El INF agrega un filtro inferior USB al adaptador
+`USB\VID_13D3&PID_3567&REV_0100&MI_00`. Conserva **BTHUSB, oem4.inf y
+MTKBTFilterX64**. Aunque las modificaciones de paquetes solo afectan al anillo,
+un fallo del filtro puede afectar todo el adaptador o causar un fallo de kernel.
+No es un controlador certificado por Microsoft ni validado para distribución.
 
-Limitaciones: solo HCI USB estándar, dirección pública, eventos LE Connection
-Complete y Enhanced Connection Complete v1. Paquetes USB/HCI fragmentados,
-MDL encadenados y buffers ACL superiores a 4096 bytes pasan sin corregir.
-Enhanced Connection Complete v2 desactiva el seguimiento. Los casos no
-soportados pueden impedir que la negociación funcione; hay que comprobarla
-en una captura real. También falta verificar la interacción con MTKBTFilterX64,
-los ciclos de energía y las cancelaciones concurrentes bajo Driver Verifier.
+El filtro aprende los pipes USB y la conexión LE del anillo. Desconexión,
+reinicio, reutilización de handle y errores invalidan ese seguimiento. Otros
+paquetes se reenvían. No expone IOCTL públicos ni emite teclas ni inicia programas.
+Limitaciones: HCI USB estándar, dirección pública, LE Connection Complete y
+Enhanced v1. Fragmentos USB/HCI, MDL encadenados y buffers >4096 bytes pasan
+sin corregir. Enhanced v2 desactiva el seguimiento. Falta Driver Verifier,
+pruebas de energía/concurrencia y HLK.
 
-## Compilación y comprobaciones locales
-
-Desde la raíz del repositorio:
+## Compilación y firma
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File driver/build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File driver/sign-test.ps1
 ```
 
-Se usan MSVC 14.44.35207, SDK/WDK NuGet 10.0.26100.6584, KMDF 1.15 y
-AddressSanitizer, ubicados en `.toolchain/`. Build Tools terminó con código 0.
-El SDK/WDK procede de NuGet de Microsoft y el instalador de VS de
-`https://aka.ms/vs/17/release/vs_BuildTools.exe` (firma Microsoft comprobada).
-No se descarga nada al ejecutar estos scripts.
+Herramientas locales en `.toolchain`: MSVC 14.44.35207, SDK/WDK oficial NuGet
+10.0.26100.6584, KMDF 1.15. Los scripts no descargan herramientas.
+La compilación ejecuta `tests/test_mtu.c` con ASan, incluyendo negociación,
+aislamiento, truncamientos, mapa y 100.000 buffers aleatorios. Kernel con
+/W4 /WX /analyze, CFG, NX y GS; INF con InfVerif /u y catálogo con Inf2Cat.
+Estas comprobaciones pasaron para 0.1.0.2. No sustituyen pruebas cargado en kernel.
 
-`build.ps1` compila y ejecuta `tests/test_mtu.c` con AddressSanitizer; comprueba
-negociaciones en ambos sentidos, aislamiento de otras conexiones, buffers
-truncados, desconexión, reutilización y 100.000 buffers aleatorios. Compila el
-kernel con `/W4 /WX /analyze`, CFG, NX y GS, valida el INF con InfVerif `/u` y
-genera el catálogo con Inf2Cat para Windows 11 x64 24H2. Todos pasaron el
-2026-11-05. `kernel-analysis.xml` no contiene defectos. No equivalen a HLK ni
-a pruebas del controlador cargado.
+La firma crea un certificado efímero nuevo por ejecución, firma SYS/CAT,
+verifica la firma criptográfica y elimina el PFX temporal. No importa confianza
+ni instala nada. En el sandbox del agente, signtool necesita elevación externa.
+Volver a compilar invalida la firma: hay que volver a firmar e importar el nuevo
+certificado si se decide instalar. No recompilar sobre el paquete instalado
+sin conservar previamente una copia para reversión.
 
-`sign-test.ps1` crea un certificado local, firma SYS y CAT y verifica la firma
-criptográfica del catálogo. Elimina el PFX temporal. No importa certificados
-en almacenes de confianza, no instala el paquete ni modifica BCD. En el entorno
-restringido del agente la firma necesitó ejecución fuera del sandbox.
-La firma no tiene confianza Microsoft; Windows informa raíz no confiable.
-Cada ejecución genera un certificado nuevo. Volver a compilar requiere volver
-a firmar; `hashes.json` identifica siempre la última salida.
+Salida: `build/jx05mtu/package/{jx05mtu.sys,jx05mtu.inf,jx05mtu.cat}`,
+`jx05-test.cer`, `hashes.json`, PDB y `kernel-analysis.xml`.
+Certificado 0.1.0.2: `515214F5FB0AA25C02FC5BD484303F722EC10B35`, importado en
+LocalMachine Root y TrustedPublisher. SYS/CAT verificaron Valid.
+La copia anterior está en `build/jx05mtu-v011`, exportada desde Driver Store.
+Su certificado `0C26A79EB0B08017507FBAD615579F1763B8915C` se retiró de Root y
+TrustedPublisher después de comprobar la nueva versión cargada. La copia
+pública exportada se conserva para una eventual reversión.
 
-Archivos preparados en `build/jx05mtu/`:
+## Activación actual y siguiente comprobación
 
-- `package/jx05mtu.sys`, `package/jx05mtu.inf`, `package/jx05mtu.cat`.
-- `jx05-test.cer`: certificado público de esta compilación.
-- `hashes.json`: SHA-256 de los tres archivos y del certificado.
-- `jx05mtu.pdb`, `kernel-analysis.xml`, `mtu-tests.exe`: evidencia de compilación.
+El usuario autorizó el controlador, la instalación, testsigning, la suspensión
+de BitLocker por un reinicio y después el primer reinicio. Este ocurrió a las
+20:22:28 y BitLocker reanudó su protección. No repetir esos cambios.
 
-## Procedimiento de activación
+Se desinstaló 0.1.0.1, conservando copia para reversión, y se agregó 0.1.0.2.
+Ambas operaciones pidieron reiniciar. El intento de reiniciar solo el adaptador
+fue rechazado por la operación pendiente. La versión antigua siguió cargada
+hasta el segundo reinicio autorizado. No forzar descargas del filtro ni
+reiniciar Windows sin la confirmación solicitada por el usuario.
 
-Hace falta autorización porque la prueba amplía el alcance al adaptador,
-interrumpe sus conexiones (incluido el ratón Bluetooth), habilita firmas de
-prueba y requiere reiniciar Windows. Un defecto de kernel puede provocar
-pérdida de Bluetooth o un pantallazo azul. Preparar el paquete no ha realizado
-ninguna de estas acciones. La aprobación de crear el controlador ya se recibió;
-lo pendiente es aprobar estos efectos concretos de probarlo.
+El segundo reinicio ya se autorizó y ejecutó. El registro está en
+`.jx05-monitor/activation-20261105-151900/state.json` y `install-v012.txt`.
+El reinicio y la recreación del nodo HID no descartaron la caché antigua;
+la lectura nativa tampoco pudo refrescarla. Desemparejar y volver a emparejar
+solo el JX-05 con confirmación estándar y cifrado provocó las seis lecturas
+corregidas. No se cambiaron asociaciones globales de drivers.
 
-Actualización: el usuario autorizó la suspensión de BitLocker por un reinicio,
-pero pidió confirmar antes de reiniciar. Ya se importó el certificado de prueba,
-se suspendió BitLocker con `RebootCount=1` y se configuró `testsigning on`.
-No se ha reiniciado ni instalado el filtro. La protección sigue suspendida
-hasta el próximo reinicio; comprobar su reanudación al volver. No repetir los
-pasos ya realizados ni reiniciar sin la confirmación pendiente. El estado está
-en `.jx05-monitor/activation-20261105-151900/state.json`.
+Proveedor ETW `{671c3451-d89a-47c8-b2dd-8bd5f0a149c3}`: evento 1 configuración
+USB; 2 handle del anillo o 65535 al perderlo; 3/4 modificaciones MTU salida/entrada;
+5 número acumulado de bloques del mapa sustituidos en la conexión. Los seis
+bloques y la colección vendor deben verificarse antes de la prueba funcional.
+BTHPORT `{8a1f9517-3a8c-4a9e-a018-4f17a200f277}` permite contrastar el tráfico.
 
-Tras esa autorización, guardar el trabajo y disponer del teclado/touchpad
-integrados. Guardar la salida de `bcdedit /enum '{current}'`, la pila del
-adaptador y `pnputil /enum-drivers`. No sustituir `oem4.inf` ni eliminar
-`MTKBTFilterX64`. No desactivar Secure Boot ni Integridad de memoria para
-forzar la carga; si impiden la prueba, registrar el bloqueo.
+## Reversión
 
-En PowerShell como administrador, desde la raíz, el procedimiento previsto es:
+Verificar primero que el INF publicado corresponde a `jx05mtu.inf`, proveedor
+JX05 local experiment. En este estado es oem3.inf; Windows puede renumerarlo.
 
 ```powershell
-Import-Certificate -FilePath build/jx05mtu/jx05-test.cer -CertStoreLocation Cert:\LocalMachine\Root
-Import-Certificate -FilePath build/jx05mtu/jx05-test.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
-bcdedit /set '{current}' testsigning on
+pnputil /delete-driver oem3.inf /uninstall
 ```
 
-Reiniciar con autorización explícita. Después comprobar que el modo de prueba
-está activo y agregar la extensión:
+Si solicita reinicio, guardar el trabajo y pedir confirmación antes de reiniciar.
+Comprobar después la pila BTHUSB + MTKBTFilterX64 sin Jx05Mtu. No eliminar oem4.inf
+ni el filtro MediaTek. Para volver a 0.1.0.1 usar la exportación guardada y su
+certificado, sabiendo que reaparecen los efectos táctiles y de volumen.
+
+Tras retirar el filtro, eliminar solo los certificados de esta prueba anotados
+en state.json de Root y TrustedPublisher. La copia antigua v0.1.0.0 ya se retiró.
+No deducir los thumbprints de un archivo que se haya vuelto a firmar.
+Para restaurar el BCD inicial sin testsigning:
 
 ```powershell
-pnputil /add-driver build/jx05mtu/package/jx05mtu.inf /install
-pnputil /enum-drivers
-```
-
-Anotar el **nombre publicado oemN.inf de jx05mtu.inf**, su proveedor
-`JX05 local experiment` y el thumbprint del certificado. No confundirlo con el
-INF base del adaptador. Si PnP pide reiniciar, esperar autorización para ello.
-Si hace falta reiniciar solo el dispositivo, la instancia observada es:
-
-```powershell
-pnputil /restart-device 'USB\VID_13D3&PID_3567&MI_00\7&2AF7C8F&0&0000'
-```
-
-Verificar primero que esa instancia sigue siendo la del adaptador. No ejecutar
-el reinicio mientras el usuario dependa del ratón Bluetooth para guardar trabajo.
-
-## Captura y criterio de aceptación
-
-El proveedor ETW `{671c3451-d89a-47c8-b2dd-8bd5f0a149c3}` emite eventos con un
-ULONG de datos: ID 1 configuración USB observada; ID 2 handle del anillo o
-65535 al perderlo; ID 3/4 número de cambios MTU de salida/entrada. Es diagnóstico
-sin manifiesto y no registra pulsaciones. La captura BTHPORT existente permite
-comprobar el MTU que ve Windows; el evento del filtro acredita el cambio de salida.
-
-Antes de pulsar botones: comprobar que el filtro está cargado, que ambos lados
-negocian 23, que Report Map termina sin respuesta excesiva y que HID inicia sin
-código 10. Si no ocurre, detener la prueba y retirar la extensión. No ampliar
-automáticamente el filtro a otros dispositivos ni inventar un mapa fijo.
-
-Solo después capturar cada botón por separado y esperar confirmación del
-usuario. Falta implementar la traducción de informes identificados a Right/Left,
-sin repeticiones al mantener pulsado, con modo presentador desactivado al inicio.
-Siguen pendientes diez avances y diez retrocesos en PowerPoint, xaringan y
-Google Slides, cinco minutos de uso y recuperación al apagar/encender el anillo.
-
-## Reversión prevista
-
-Eliminar solo el nombre publicado que se anotó para esta extensión:
-
-```powershell
-# Sustituir oemN.inf por el nombre confirmado de jx05mtu.inf.
-pnputil /delete-driver oemN.inf /uninstall
-```
-
-Si Windows requiere reiniciar, hacerlo después de guardar el trabajo. Para un
-fallo de carga, utilizar el modo seguro y retirar ese mismo paquete. No borrar
-el INF MediaTek ni cambiar listas globales de filtros. Después de desinstalar,
-comprobar BTHUSB + MTKBTFilterX64 y ausencia de Jx05Mtu en la pila.
-
-Retirar únicamente el certificado de prueba importado en esta sesión:
-
-```powershell
-$testCert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Resolve-Path build/jx05mtu/jx05-test.cer).Path)
-$testThumbprint = $testCert.Thumbprint
-Remove-Item -LiteralPath "Cert:\LocalMachine\Root\$testThumbprint"
-Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPublisher\$testThumbprint"
 bcdedit /deletevalue '{current}' testsigning
 ```
 
-Esto presupone el estado inicial observado: sin estos certificados y sin valor
-`testsigning` en BCD. Si ese estado cambia antes de la prueba, restaurar lo
-guardado, no aplicar esta reversión a ciegas. Reiniciar para volver al arranque
-normal. No volver a firmar entre instalación y retirada del certificado; guardar
-el thumbprint importado independientemente del archivo.
+Restaurar BCD también requiere preparar BitLocker y autorizar el reinicio;
+no ejecutar ese comando mientras se dependa del filtro firmado para pruebas.
+La clave de recuperación no se solicitó ni se extrajo.
 
-## Fundamento
+## Fuentes
 
-- [Extensiones INF y desinstalación](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/using-an-extension-inf-file).
-- [Filtros por dispositivo](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-addfilter-directive).
-- [Contrato de URB bulk/interrupt](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usb/ns-usb-_urb_bulk_or_interrupt_transfer).
-- [Código HOGP de Jieli](https://github.com/Jieli-Tech/fw-AC63_BT_SDK/blob/master/apps/hid/modules/bt/ble_hogp.c): el caso Report Map puede devolver la longitud total al alcanzar el final sin copiar datos. Coincide con una hipótesis del fallo capturado; no identifica inequívocamente el firmware de esta unidad.
+- [INF de extensión](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/using-an-extension-inf-file).
+- [AddFilter](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/inf-addfilter-directive).
+- [URB bulk/interrupt](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usb/ns-usb-_urb_bulk_or_interrupt_transfer).
+- [Jieli HOGP](https://github.com/Jieli-Tech/fw-AC63_BT_SDK/blob/master/apps/hid/modules/bt/ble_hogp.c): hipótesis del fallo de lectura al final del mapa, no identificación inequívoca de firmware.

@@ -1,4 +1,4 @@
-"""Observador AE02/AE42 del JX-05: no cambia controladores ni emite teclas."""
+"""Monitor HID del JX-05; modo presentador optativo, desactivado al iniciar."""
 import argparse
 import asyncio
 import contextlib
@@ -97,8 +97,99 @@ async def monitor(client_factory, status, emit, save, stopped, *, tick=1, retry_
         delay = min(delay * 2, retry_max)
 
 
-async def run():
-    from bleak import BleakClient
+def foreground_class():
+    from ctypes import wintypes as w
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.GetForegroundWindow.argtypes = []
+    user.GetForegroundWindow.restype = w.HWND
+    user.GetClassNameW.argtypes = [w.HWND, w.LPWSTR, ctypes.c_int]
+    user.GetClassNameW.restype = ctypes.c_int
+    name = ctypes.create_unicode_buffer(256)
+    if not user.GetClassNameW(user.GetForegroundWindow(), name, len(name)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return name.value
+
+
+def foreground_fullscreen():
+    from ctypes import wintypes as w
+    c = ctypes
+    class Monitor(c.Structure):
+        _fields_ = [('size', w.DWORD), ('screen', w.RECT), ('work', w.RECT), ('flags', w.DWORD)]
+    user, dwm = c.WinDLL('user32', use_last_error=True), c.WinDLL('dwmapi')
+    user.GetForegroundWindow.argtypes = []
+    user.GetForegroundWindow.restype = w.HWND
+    user.GetWindowLongW.argtypes = [w.HWND, c.c_int]
+    user.GetWindowLongW.restype = w.LONG
+    user.MonitorFromWindow.argtypes = [w.HWND, w.DWORD]
+    user.MonitorFromWindow.restype = w.HANDLE
+    user.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(Monitor)]
+    user.GetMonitorInfoW.restype = w.BOOL
+    dwm.DwmGetWindowAttribute.argtypes = [w.HWND, w.DWORD, c.c_void_p, w.DWORD]
+    dwm.DwmGetWindowAttribute.restype = c.c_int32
+    hwnd = user.GetForegroundWindow()
+    if user.GetWindowLongW(hwnd, -16) & 0x00c00000:
+        return False
+    rect, monitor = w.RECT(), Monitor(size=c.sizeof(Monitor))
+    hr = dwm.DwmGetWindowAttribute(hwnd, 9, c.byref(rect), c.sizeof(rect))
+    if hr != 0:
+        raise RuntimeError(f'No se pudo consultar la pantalla completa: HRESULT={hr & 0xffffffff:08x}')
+    if not user.GetMonitorInfoW(user.MonitorFromWindow(hwnd, 2), c.byref(monitor)):
+        raise c.WinError(c.get_last_error())
+    # shortcut: Google Slides en pantalla completa; el modo en ventana requiere otra detección.
+    return all(getattr(rect, edge) == getattr(monitor.screen, edge) for edge in ('left', 'top', 'right', 'bottom'))
+
+
+def send_key(action):
+    from ctypes import wintypes as w
+    c = ctypes
+    class Keyboard(c.Structure):
+        _fields_ = [('vk', w.WORD), ('scan', w.WORD), ('flags', w.DWORD),
+                    ('time', w.DWORD), ('extra', c.c_size_t)]
+    class Mouse(c.Structure):
+        _fields_ = [('x', w.LONG), ('y', w.LONG), ('data', w.DWORD),
+                    ('flags', w.DWORD), ('time', w.DWORD), ('extra', c.c_size_t)]
+    class Payload(c.Union):
+        _fields_ = [('keyboard', Keyboard), ('mouse', Mouse)]
+    class Input(c.Structure):
+        _fields_ = [('kind', w.DWORD), ('payload', Payload)]
+    send = c.WinDLL('user32', use_last_error=True).SendInput
+    send.argtypes = [w.UINT, c.POINTER(Input), c.c_int]
+    send.restype = w.UINT
+    keys = {'next': (0x27,), 'previous': (0x25,), 'powerpoint': (0x10, 0x74),
+            'google': (0x11, 0x74), 'xaringan': (0x46,)}[action]
+    if action == 'powerpoint' and foreground_class() in ('screenClass', 'PodiumParent'):
+        keys = (0x1b,)
+    if action == 'google' and foreground_fullscreen():
+        keys = (0x1b,)
+    events = [(key, 0) for key in keys] + [(key, 2) for key in reversed(keys)]
+    batch = (Input * len(events))()
+    for index, (key, flags) in enumerate(events):
+        batch[index].kind = 1
+        batch[index].payload.keyboard = Keyboard(key, 0, flags, 0, 0)
+    sent = send(len(batch), batch, c.sizeof(Input))
+    if sent != len(batch):
+        held = []
+        for key, flags in events[:sent]:
+            if flags == 0: held.append(key)
+            else: held.remove(key)
+        if held:
+            release = (Input * len(held))()
+            for index, key in enumerate(reversed(held)):
+                release[index].kind = 1
+                release[index].payload.keyboard = Keyboard(key, 0, 2, 0, 0)
+            send(len(release), release, c.sizeof(Input))
+        raise RuntimeError(f'SendInput aceptó {sent}/{len(batch)} eventos; revisar permisos de la aplicación en primer plano')
+
+
+def run():
+    try:
+        from .capture_raw_hid import run as capture_raw
+        from .jx05_gestures import Gestures
+        from .map_jx05 import load as load_mapping
+    except ImportError:
+        from capture_raw_hid import run as capture_raw
+        from jx05_gestures import Gestures
+        from map_jx05 import load as load_mapping
 
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
@@ -114,6 +205,7 @@ async def run():
     try:
         STATE.mkdir(exist_ok=True)
         (STATE / 'stop').unlink(missing_ok=True)
+        (STATE / 'presenter-command.json').unlink(missing_ok=True)
         logger = logging.getLogger('jx05')
         logger.setLevel(logging.INFO)
         handler = RotatingFileHandler(STATE / 'events.log', maxBytes=2_000_000, backupCount=2, encoding='utf-8')
@@ -121,7 +213,11 @@ async def run():
         logger.addHandler(handler)
         status = {'pid': os.getpid(), 'running': True, 'connection': 'DISCONNECTED',
                   'capture': 'SIN_SUSCRIPCION', 'subscriptions': [], 'packets': 0,
-                  'last_packet': None, 'presenter_enabled': False, 'retry_seconds': 0, 'error': None}
+                  'last_packet': None, 'presenter_enabled': False, 'retry_seconds': 0, 'error': None,
+                  'actions': 0, 'last_action': None, 'backend': 'raw-input'}
+        decoder = Gestures()
+        mapping = load_mapping()
+        status['mapping'] = mapping
 
         def save():
             status['updated'] = datetime.now(timezone.utc).isoformat()
@@ -129,13 +225,59 @@ async def run():
             pending.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding='utf-8')
             pending.replace(STATE / 'status.json')
 
-        logger.info('INICIO: observacion AE02/AE42; sin cambios de controlador; sin emision de teclas')
+        def on_event(event, **fields):
+            logger.info('%s %s', event, json.dumps(fields))
+            if event == 'ready':
+                status.update(capture='ESCUCHANDO_HID', connection='ESPERANDO_INFORMES')
+            elif event == 'device_change':
+                decoder.reset()
+                status['connection'] = 'CAMBIO_DE_DISPOSITIVO'
+            elif event == 'report':
+                status['packets'] += 1
+                status['last_packet'] = dict(time=datetime.now(timezone.utc).isoformat(), **fields)
+                status['connection'] = 'INFORMES_RECIBIDOS'
+                button = decoder.feed(bytes.fromhex(fields['hex']), time.monotonic())
+                if button:
+                    action = mapping[button]
+                    status['last_button'] = button
+                    logger.info('GESTO %s action=%s presenter=%s', button, action, status['presenter_enabled'])
+                    if status['presenter_enabled'] and action != 'none':
+                        try:
+                            send_key(action)
+                        except Exception as exc:
+                            status.update(presenter_enabled=False, error=str(exc))
+                            logger.exception('EMISION_DESACTIVADA')
+                        else:
+                            status['actions'] += 1
+                            status['last_action'] = dict(action=action, time=datetime.now(timezone.utc).isoformat())
+            elif event == 'error':
+                status.update(error=fields['detail'], presenter_enabled=False)
+            save()
+
+        def tick():
+            nonlocal mapping
+            command = STATE / 'presenter-command.json'
+            if command.exists():
+                request = json.loads(command.read_text(encoding='utf-8'))
+                command.unlink()
+                if request.get('pid') == os.getpid() and type(request.get('enabled')) is bool:
+                    decoder.reset()
+                    status['presenter_enabled'] = False
+                    if request['enabled']:
+                        mapping = load_mapping()
+                        status['mapping'] = mapping
+                    status['presenter_enabled'] = request['enabled']
+                    logger.info('PRESENTADOR %s', request['enabled'])
+            save()
+
+        logger.info('INICIO: Raw Input; modo presentador desactivado; sin cambios de controlador')
         try:
-            await monitor(BleakClient, status, logger.info, save, lambda: (STATE / 'stop').exists())
+            capture_raw(on_event=on_event, on_tick=tick, stopped=lambda: (STATE / 'stop').exists())
         finally:
             status['running'] = False
+            status['presenter_enabled'] = False
             save()
-            logger.info('FIN: suscripciones y conexion liberadas')
+            logger.info('FIN: lectura HID detenida')
     finally:
         if handler:
             logger.removeHandler(handler)
@@ -149,6 +291,8 @@ if __name__ == '__main__':
     modes.add_argument('--run', action='store_true')
     modes.add_argument('--status', action='store_true')
     modes.add_argument('--stop', action='store_true')
+    modes.add_argument('--presenter-on', action='store_true')
+    modes.add_argument('--presenter-off', action='store_true')
     args = parser.parse_args()
     if args.status:
         path = STATE / 'status.json'
@@ -158,5 +302,13 @@ if __name__ == '__main__':
         STATE.mkdir(exist_ok=True)
         (STATE / 'stop').touch()
         print('Parada solicitada. Esperar running=false.')
+    elif args.presenter_on or args.presenter_off:
+        state = json.loads((STATE / 'status.json').read_text(encoding='utf-8'))
+        if not state.get('running') or state.get('backend') != 'raw-input':
+            raise SystemExit('El monitor HID no está activo.')
+        pending = STATE / 'presenter-command.tmp'
+        pending.write_text(json.dumps({'pid': state['pid'], 'enabled': args.presenter_on}), encoding='utf-8')
+        pending.replace(STATE / 'presenter-command.json')
+        print('Orden enviada; comprobar presenter_enabled en --status.')
     else:
-        asyncio.run(run())
+        run()

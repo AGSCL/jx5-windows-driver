@@ -4,7 +4,7 @@ Class=Extension
 ClassGuid={e2f84ce7-8efa-411c-aa69-97454ca4cb57}
 ExtensionId={ed85227b-eccc-48a5-9616-2e510170c3d4}
 Provider=%Provider%
-DriverVer=11/05/2026,0.1.0.0
+DriverVer=11/05/2026,0.1.0.2
 CatalogFile=jx05mtu.cat
 PnpLockdown=1
 

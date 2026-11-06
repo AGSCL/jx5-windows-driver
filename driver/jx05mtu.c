@@ -72,11 +72,13 @@ static void Inspect(DEVICE_CONTEXT *ctx, PURB urb, BOOLEAN incoming)
     PUCHAR buffer;
     unsigned changed = 0;
     unsigned short before, after;
+    ULONG patchesBefore, patchesAfter;
     if (urb->UrbHeader.Length < sizeof(*transfer) ||
         !!(transfer->TransferFlags & USBD_TRANSFER_DIRECTION_IN) != !!incoming) return;
     buffer = TransferBuffer(transfer);
     WdfSpinLockAcquire(ctx->lock);
     before = ctx->link.active ? ctx->link.handle : 0xffff;
+    patchesBefore = ctx->link.map_patches;
     if (incoming && transfer->PipeHandle == ctx->events && ctx->events) {
         if (buffer && transfer->TransferBufferLength && transfer->TransferBufferLength <= 4096)
             Jx05Events(&ctx->link, buffer, transfer->TransferBufferLength);
@@ -86,9 +88,11 @@ static void Inspect(DEVICE_CONTEXT *ctx, PURB urb, BOOLEAN incoming)
         changed = Jx05Acl(&ctx->link, buffer, transfer->TransferBufferLength, incoming);
     }
     after = ctx->link.active ? ctx->link.handle : 0xffff;
+    patchesAfter = ctx->link.map_patches;
     WdfSpinLockRelease(ctx->lock);
     if (before != after) Log(2, after);
     if (changed) Log(incoming ? 4 : 3, changed);
+    if (patchesAfter > patchesBefore) Log(5, patchesAfter);
 }
 
 void Complete(WDFREQUEST request, WDFIOTARGET target, PWDF_REQUEST_COMPLETION_PARAMS params, WDFCONTEXT context)

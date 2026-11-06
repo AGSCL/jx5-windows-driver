@@ -6,6 +6,9 @@ typedef struct JX05_LINK {
     unsigned char active;
     unsigned char request_out;
     unsigned char request_in;
+    unsigned char map_pending;
+    unsigned short map_next;
+    unsigned long map_patches;
 } JX05_LINK;
 
 void Jx05Reset(JX05_LINK *link);

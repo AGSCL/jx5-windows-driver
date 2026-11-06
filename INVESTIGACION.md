@@ -1105,3 +1105,190 @@ Al volver, verificar explícitamente la reanudación de BitLocker, el nuevo
 LastBootUpTime y el modo de prueba antes de instalar el paquete ya autorizado.
 El reinicio requiere ahora confirmación expresa del usuario. No hay todavía
 recepción de botones ni prueba funcional del controlador.
+
+### Continuación 2026-11-05: HID funcionando y efectos nativos identificados
+
+El usuario autorizó el reinicio («reinicia noams»). Windows arrancó a las
+20:22:28, BitLocker reanudó su protección y el kernel confirmó testsigning
+activo. No se cambió Secure Boot. Se instaló la extensión Jx05Mtu conservando
+BTHUSB, oem4.inf y MTKBTFilterX64.
+
+La primera versión no corregía la oferta MTU de Windows: era 527, superior
+al límite 517 que rechazaba el prototipo. La versión 0.1.0.1 acepta cualquier
+oferta >=23 y la reduce a 23. La traza confirma lecturas del mapa de 126 bytes
+en bloques 22/22/22/22/22/16 y el HID inicia sin código 10. Evidencia local:
+`activation-20261105-151900/v011-{filter,bth}.{etl,xml}` y fixture
+`tests/fixtures/jx05_report_map_complete.json`.
+
+Se capturaron y confirmaron por separado pulsaciones cortas y mantenidas de
+los cuatro botones. Superior/inferior producen gestos verticales; los laterales
+producen gestos horizontales. Mantener superior/inferior produce pulsos consumer
+de volumen; mantener los laterales produce dos contactos táctiles. El usuario
+pidió explícitamente repetición al mantener, sustituyendo el requisito inicial.
+Los ocho casos están en `tests/fixtures/jx05_buttons.json`.
+
+El monitor Raw Input emite Left/Right mediante SendInput, empieza desactivado y
+admite --presenter-on/--presenter-off. El usuario confirmó movimiento de
+diapositivas en PowerPoint, pero también cambios de volumen y selección de
+texto. Por tanto, esta versión NO cumple todavía el objetivo. Se desactivó la
+emisión y después se detuvo el monitor para actualizar el filtro. No se ha
+registrado inicio automático ni se han validado xaringan/Google Slides.
+
+La versión 0.1.0.2 preparada sustituye únicamente los bloques exactos del mapa
+capturado por otro de igual longitud, con colección vendor FF00:0001 y los
+mismos tamaños de informes (ID1=32 bits, ID3=24 bits). Busca impedir que Windows
+los interprete además como pantalla táctil/volumen. No cambia los datos de
+botones ni el firmware. Se compila con análisis estático y pruebas C/ASan.
+Las 34 pruebas Python pasan, incluidas las ocho capturas con informes duplicados.
+El anillo reinicia contactos durante un mismo mantenimiento: se conserva el
+límite de repetición de 750 ms entre esos reinicios. Su aplicación en hardware
+y la desaparición de efectos secundarios siguen pendientes en este punto.
+
+Se exportó oem3.inf (0.1.0.1) y su certificado a `build/jx05mtu-v011` para
+reversión. La firma de 0.1.0.2 usa el certificado
+`515214F5FB0AA25C02FC5BD484303F722EC10B35`; aún debe verificarse su instalación.
+
+### 0.1.0.2 agregado, segundo reinicio pendiente y módulo de mapeo
+
+La retirada de 0.1.0.1 solicitó reinicio. Reiniciar únicamente el adaptador
+fue rechazado por PnP porque existe una operación pendiente. Se agregó 0.1.0.2
+como oem3.inf, resultado 3010; la versión vieja continúa cargada. El nuevo
+certificado está importado y las firmas SYS/CAT son Valid. Se conserva el
+certificado anterior hasta verificar el nuevo arranque. BitLocker continúa
+FullyEncrypted / Protection On. No se reinició ni se cambió BCD en esta
+actualización. El monitor está detenido.
+
+El usuario pidió un módulo breve de calibración o mapeo y aclaró que mantener
+el central >=3 segundos apaga el anillo. Se añadió `tools/map_jx05.py`: asigna
+por separado avanzar/retroceder/ninguna acción a los cuatro direccionales y
+guarda un JSON validado. El monitor lo carga al iniciar y al activar emisión.
+El decodificador distingue ahora el botón físico de su acción asignada.
+
+Para el central el usuario se inclinó por pantalla completa o iniciar la
+presentación. El asistente permite guardar PowerPoint (Shift+F5), Google Slides
+(Ctrl+F5) o xaringan (F); el emisor tiene comprobación de pares y limpieza de
+modificadores ante fallo parcial. **El central aún no se decodifica ni se emite**:
+primero hace falta capturar y confirmar solo su pulsación corta. Su preferencia
+inicial sigue sin asignar; mantenerlo no será una función del presentador.
+
+Pasan 38 pruebas Python. La desaparición de efectos, la señal central y el
+funcionamiento real de los tres entornos están pendientes. El estado de
+activación se guardó como `v012-staged-awaiting-explicit-restart`.
+
+El usuario autorizó el segundo reinicio y preguntó por BitLocker. Se verificó
+otra vez C: FullyEncrypted / Protection On y BCD testsigning Yes. No se cambió
+BCD ni se suspendió o descifró BitLocker para esta actualización. Se procede
+al reinicio autorizado para cargar 0.1.0.2, sin forzar el cierre de aplicaciones.
+Al volver se deben verificar la versión cargada, el estado HID y BitLocker
+antes de activar captura y solicitar la pulsación corta del central.
+
+### Segundo arranque y aislamiento HID verificado
+
+Windows arrancó el 2026-11-05 a las 21:06:07. Jx05Mtu está RUNNING y su binario
+Driver Store tiene SHA-256 6E660BCD4BEC413CA2010FE70ABDE424A0FB3539B18DCE3D8C8881F97AF2ADDF,
+igual al firmado 0.1.0.2. BitLocker permanece FullyEncrypted / Protection On.
+Se retiró únicamente el certificado anterior 0C26... de Root/TrustedPublisher.
+
+Windows conservaba el mapa HID antiguo en caché. Reiniciar y recrear solo el
+nodo HID no generó lecturas ATT. BluetoothGATTGetCharacteristicValue devolvió
+80070001 con handle de dispositivo; abrir la interfaz de servicio devolvió
+Win32 31. Se renovó únicamente el emparejamiento del JX-05. PairAsync básico
+falló; la ceremonia estándar CONFIRM_ONLY con cifrado terminó PAIRED.
+
+La captura `v012-refresh-filter.etl/xml` registra evento 3 (MTU corregido) y
+seis eventos 5 con contadores 1..6. `v012-refresh-bth.etl/xml` confirma MTU23
+y los 126 bytes vendor. Windows expone una sola colección de proveedor, sin
+error, en lugar de consumer y touchscreen. El fixture
+`tests/fixtures/jx05_report_map_vendor.json` conserva mapa y hash de la captura.
+La instancia HID nueva usa sufijo A&49E30AC&22&0023.
+
+El usuario confirmó derecho mantenido sin selección/movimiento del puntero y
+superior mantenido sin cambios de volumen. El monitor recibió respectivamente
+gestos táctiles y reportes consumer ahora encapsulados en la colección vendor;
+estos últimos llegan con relleno a cinco bytes (`0302000000` / `0300000000`).
+
+La pulsación corta del central confirmada a las 21:15:25 produjo
+`0107f40119` y `0100f40119`: x500/y400, contacto y liberación. Se añadió su
+reconocimiento por par completo, tolerando duplicados y descartando pares
+incompletos/interrumpidos. No se probó mantener el central por su apagado físico.
+La captura no permite garantizar si su firmware emite también este par al
+comenzar una pulsación larga; el software no genera repetición para el central.
+
+El monitor actualizado arrancó como PID11584. La configuración local asigna
+central=powerpoint y conserva superior/izquierdo=previous, inferior/derecho=next.
+Tras confirmar el usuario PowerPoint en primer plano, se activó el modo
+presentador a las 21:18:53. La prueba funcional del central está en curso.
+
+### Validación de PowerPoint y central como conmutador
+
+El usuario confirmó que el central iniciaba la presentación y pidió que una
+segunda pulsación saliera. Se corrigió `send_key`: para el perfil PowerPoint
+consulta la clase de la ventana en primer plano; screenClass/PodiumParent
+reciben Escape, edición recibe Shift+F5. No mantiene un contador que se pueda
+desincronizar al salir con el teclado. El usuario confirmó entrada y salida.
+
+Con el monitor PID7780, el usuario confirmó diez avances correctos con derecho
+y diez retrocesos con izquierdo, volviendo al punto de partida y sin saltos
+extra. El registro conserva diez GESTO right entre 21:25:05 y 21:25:13 y la
+serie posterior de retrocesos. No hubo errores de emisión. La inspección de
+PowerPoint antes de la prueba mostraba diapositiva 1 de 27. La activación por
+Computer Use falló; la prueba se ejecutó físicamente con el anillo.
+
+Se desactivó emisión y se preparó central=xaringan mientras el usuario abre
+esa aplicación. La validación de xaringan, Google Slides y recuperación tras
+apagar/encender sigue pendiente. Se añadieron a las pruebas las capturas vendor
+de superior mantenido (relleno a cinco bytes) y derecho mantenido.
+
+### xaringan validado y perfil Google Slides en prueba
+
+El usuario confirmó en xaringan diez avances con inferior, diez retrocesos con
+superior y entrada/salida de pantalla completa con central (F). No informó
+saltos extra ni cambios de volumen. El monitor se mantuvo activo durante estas
+pruebas, sin errores de emisión. Se desactivó temporalmente para cambiar perfil.
+
+Para Google Slides se añadió Ctrl+F5 desde edición y Escape cuando la ventana
+en primer plano ocupa el monitor completo sin marco. Se usan límites físicos
+DWM para evitar mezclar escalas DPI, comparados con MONITORINFO. La detección
+es para presentación a pantalla completa; no identifica una presentación que
+se haya dejado en ventana ni diferencia la pantalla completa manual F11.
+La función principal de avance/retroceso no depende de esa detección.
+Hay pruebas de límites de pantalla, coordenadas negativas, ventana maximizada
+con marco y error de consulta. El monitor PID9256 cargó central=google y activó
+emisión tras confirmar el usuario Google Slides en primer plano.
+
+El usuario confirmó en Google Slides la entrada con central y salida de
+pantalla completa en la segunda pulsación, diez avances con derecho y diez
+retrocesos con izquierdo. Los tres entornos han pasado 10 avances y 10
+retrocesos cada uno. Se está completando la prueba de repetición/liberación
+con inferior mantenido y después la recuperación tras apagar/encender.
+
+La prueba de inferior mantenido en Google Slides encontró un fallo real: no
+avanzaba. Raw Input entregaba `0301000019`/`0300000019`, mientras la primera
+captura vendor tenía relleno cero. El mapa define ID3 con solo 24 bits: el
+quinto byte del paquete de cinco bytes es relleno no especificado y conservaba
+0x19 de un informe anterior. El decodificador lo rechazaba equivocadamente.
+
+Se añadió la captura fallida (seis pares) al fixture y se reprodujo el fallo
+antes de corregirlo. Ahora ID3 interpreta exclusivamente sus tres bytes de
+datos y acepta el tamaño común de Raw Input sin exigir relleno cero. Se
+comprueban también los 256 valores posibles del byte de relleno, duplicados
+y liberación. No se modificó el kernel. Monitor PID10308 cargó la corrección;
+la repetición física se está comprobando de nuevo.
+
+El usuario confirmó que con la corrección el inferior mantenido avanza
+repetidamente, deja de avanzar al soltar y no cambia el volumen. Pasan 43
+pruebas Python. Se mantuvo el PID10308 y se desactivaron las teclas para
+comenzar la prueba de apagado/reconexión con el mismo proceso.
+
+### Reconexión física verificada
+
+El usuario confirmó el apagado; WinRT informó DISCONNECTED y el monitor
+PID10308 seguía vivo (inicio 21:36:12), con emisión desactivada. Tras confirmar
+el encendido, WinRT informó CONNECTED y el HID vendor siguió OK. No se
+reinició el monitor ni se reinstaló/reaplicó el filtro. Llegaron nuevos
+informes al mismo proceso. Se reactivó la emisión y el usuario confirmó que
+una pulsación del derecho avanzó exactamente una vez en Google Slides.
+
+El inicio automático se revisó con `monitor_logon.ps1 -Action Install -WhatIf`;
+no existía tarea JX05 Monitor. Se solicitó la confirmación prevista antes de
+registrarla. Falta cerrar el periodo final de uso de cinco minutos.
