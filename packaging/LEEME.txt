@@ -1,4 +1,4 @@
-JX05 Presenter 0.2.0 - piloto para Windows 11 x64
+JX05 Presenter 0.2.2 - piloto para Windows 11 x64
 
 INSTALACION
 1. Extrae TODO el ZIP. No ejecutes archivos dentro de la vista del ZIP.
@@ -38,6 +38,14 @@ Mantener una direccion repite. Central >=3 segundos apaga fisicamente el anillo.
 
 Fuera de presentaciones: izquierdo/anterior, derecho/siguiente, central
 pausa/reanuda, superior/inferior volumen de Windows en pasos de 5 puntos.
+El volumen funciona tambien sin reproductor abierto. Pistas y pausa/reanudar
+requieren un reproductor disponible. Una presentacion sigue teniendo prioridad.
+Tras tres segundos de informes continuos de pulsacion mantenida, cada repeticion
+de volumen pasa a 10 puntos. Una pulsacion corta vuelve a 5. El anillo envia
+liberaciones internas entre repeticiones: una pausa de mas de un segundo o
+un gesto distinto reinicia la cuenta. El tiempo se mide desde el primer informe.
+La aceleracion de 0.2.2 paso pruebas automaticas; falta confirmar fisicamente
+una pulsacion que alcance el umbral y el regreso posterior a pasos de 5.
 VLC 3 esta probado. Se admiten sesiones Windows SMTC musicales, pero aun no se
 han probado otros reproductores. Los navegadores no se controlan como musica.
 VLC usa un control dirigido y supone que el elemento cargado es musica; tambien

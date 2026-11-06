@@ -13,11 +13,16 @@ class Gestures:
         self.hold_y = self.hold_action = self.hold_emitted = None
         self.hold_seed = False
         self.center_time = None
+        self.repeat_start = self.repeat_button = None
+        self.held_seconds = 0
 
     def feed(self, data, now):
         if self.time is not None and (now < self.time or now - self.time > 1):
             self.reset()
         self.time = now
+        self.held_seconds = 0
+        if not data or data[0] != 3:
+            self.repeat_start = self.repeat_button = None
         if data == bytes.fromhex('0107f40119') and self.start is None and not self.hold_seed:
             if self.center_time is None:
                 self.center_time = now
@@ -36,7 +41,13 @@ class Gestures:
             self.armed = False
             self.hold_seed = False
             if previous == 0:
-                return {1: 'lower', 2: 'upper'}.get(value)
+                button = {1: 'lower', 2: 'upper'}.get(value)
+                if button:
+                    if button != self.repeat_button:
+                        self.repeat_button, self.repeat_start = button, now
+                    # Firmware sends zero between repeats; silence/another gesture ends the hold.
+                    self.held_seconds = now - self.repeat_start
+                return button
             return None
         if len(data) != 5 or data[0] != 1:
             self.reset()

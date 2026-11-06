@@ -27,10 +27,10 @@ struct Apartment {
     ~Apartment() { winrt::uninit_apartment(); }
 };
 
-// direction: -1/down, 0/query, 1/up. Result: percent, or a failed HRESULT.
+// direction: signed steps of 5 points (-2..2), 0=query. Result: percent or HRESULT.
 extern "C" __declspec(dllexport) int __cdecl JxVolume(int direction)
 {
-    if (direction < -1 || direction > 1) return E_INVALIDARG;
+    if (direction < -2 || direction > 2) return E_INVALIDARG;
     try {
         Apartment apartment;
         winrt::com_ptr<IMMDeviceEnumerator> enumerator;

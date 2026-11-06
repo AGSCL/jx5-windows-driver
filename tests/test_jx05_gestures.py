@@ -9,6 +9,22 @@ CASES = json.loads((Path(__file__).parent / 'fixtures/jx05_buttons.json').read_t
 
 
 class GestureTests(unittest.TestCase):
+    def test_hold_duration_ignores_internal_releases_and_resets(self):
+        for value in (1, 2):
+            d = Gestures()
+            for now in (0, .75, 1.5, 2.25, 3):
+                self.assertIsNotNone(d.feed(bytes([3,value,0,0,0]), now))
+                self.assertEqual(d.held_seconds, now)
+                self.assertIsNone(d.feed(bytes([3,value,0,0,0]), now + .01))
+                self.assertIsNone(d.feed(bytes([3,0,0,0,0]), now + .02))
+            d.feed(bytes([3,value,0,0,0]), 5)
+            self.assertEqual(d.held_seconds, 0)
+            d.feed(bytes([3,0,0,0,0]), 5.02)
+            d.feed(bytes([3,3-value,0,0,0]), 5.5)
+            self.assertEqual(d.held_seconds, 0)
+            d.feed(bytes.fromhex('0100f4e115'), 5.6)
+            self.assertIsNone(d.repeat_start)
+
     def test_real_short_and_held_presses_with_duplicates(self):
         for case in CASES:
             for copies in (1, 3):

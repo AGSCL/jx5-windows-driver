@@ -1,8 +1,8 @@
 # JX-05 como pasador en Windows 11
 
-## Aplicación instalable 0.2.0
+## Aplicación instalable 0.2.2 preliminar
 
-Paquete piloto: `build/JX05-0.2.0-win-x64.zip`. Extrae todo y ejecuta
+Paquete piloto: `build/JX05-0.2.2-win-x64.zip`. Extrae todo y ejecuta
 `Instalar.cmd` con tu usuario habitual. Incluye `JX05.exe`, Python privado,
 el componente de contexto y el controlador firmado de prueba 0.1.0.2.
 No requiere Anaconda ni herramientas de desarrollo en el equipo de destino.
@@ -119,10 +119,18 @@ web no usan cookies ni credenciales y se guardan en memoria durante un minuto.
 No se registran URLs, contenido de páginas ni títulos de canciones. Si no se
 puede identificar una pestaña, el control queda inactivo en ella.
 
-Fuera de las presentaciones, si hay un reproductor compatible abierto con música
+Fuera de las presentaciones, superior/inferior controlan el volumen de Windows
+también sin reproductor abierto (desde 0.2.1). Si hay un reproductor compatible abierto con música
 reproduciéndose o pausada: izquierdo/anterior, derecho/siguiente, central corto
 pausa/reanuda y superior/inferior suben/bajan el volumen general de Windows
 en 5 puntos porcentuales, limitado entre 0 y 100. Mantener los direccionales
+durante tres segundos de informes continuos cambia el paso de volumen a 10 puntos
+(0.2.2). El tiempo se mide desde el primer informe de repetición recibido.
+Una pulsación corta vuelve a 5; una pausa de más de un segundo o un gesto distinto
+reinicia la cuenta. El firmware envía liberaciones internas entre repeticiones,
+por lo que no se puede tratar cada liberación como el fin de una pulsación física.
+La aceleración pasó pruebas automáticas y queda pendiente de confirmación física
+completa. Mantener los direccionales
 repite; el central no repite. Se descartan órdenes al cambiar de ventana,
 desactivar el control o superar un segundo de antigüedad.
 
@@ -164,7 +172,9 @@ reinicios de contactos durante una pulsación mantenida, mapeo y envío de tecla
 con limpieza de modificadores ante un envío parcial. La compilación del filtro
 incluye pruebas C con AddressSanitizer y análisis estático.
 
-Pasan 53 pruebas Python con Anaconda y con el Python privado del paquete. Se
+La versión 0.2.0 pasó 53 pruebas Python con Anaconda y con el Python privado del paquete;
+0.2.1 pasó 54 pruebas y 0.2.2 pasa 56, incluyendo aceleración a los tres segundos,
+prioridad de presentaciones, volumen sin reproductor y regreso a 5 puntos. Se
 comprobaron además los scripts PowerShell, rechazo de archivos alterados y
 hardware incompatible, instalación, actualización conservando el mapeo y la
 desinstalación con `-WhatIf` (sin borrar).
@@ -172,8 +182,9 @@ desinstalación con `-WhatIf` (sin borrar).
 La sesión de prueba de la selección automática y VLC duró más de cinco minutos
 sin errores registrados. Después se ajustó el paso de volumen a 5 puntos y el
 usuario confirmó que así está bien. Otros reproductores SMTC siguen pendientes de prueba
-física. El arranque de sesión real requiere comprobarse tras un próximo inicio;
-la tarea se probó ejecutándola manualmente sin reiniciar Windows.
+física. El arranque real de sesión quedó verificado después del reinicio del
+2026-11-05 a las 22:45:48: JX05 inició solo y activo a las 22:46:06, con el
+controlador funcionando y BitLocker protegido.
 No confundir una prueba de decodificación con una prueba de presentación real.
 
 [Investigación y evidencia](INVESTIGACION.md) · [Filtro, instalación y reversión](driver/README.md)

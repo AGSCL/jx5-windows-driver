@@ -252,7 +252,7 @@ def run(start_enabled=False):
                     status['last_button'] = button
                     logger.info('GESTO %s action=%s presenter=%s', button, action, status['presenter_enabled'])
                     if status['presenter_enabled']:
-                        router.submit(button)
+                        router.submit(button, decoder.held_seconds)
             elif event == 'error':
                 status.update(error=fields['detail'], presenter_enabled=False)
                 router.configure(False, mapping)

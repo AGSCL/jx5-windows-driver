@@ -18,9 +18,11 @@ def choose_action(context, button, mapping, media_available):
     if context in ('powerpoint', 'google', 'xaringan'):
         action = mapping[button]
         return context if action == 'present' else action
-    if context == 'other' and media_available:
-        return {'left': 'track-previous', 'right': 'track-next', 'center': 'play-pause',
-                'upper': 'volume-up', 'lower': 'volume-down'}[button]
+    if context == 'other':
+        if button in ('upper', 'lower'):
+            return 'volume-up' if button == 'upper' else 'volume-down'
+        if media_available:
+            return {'left': 'track-previous', 'right': 'track-next', 'center': 'play-pause'}[button]
     return 'none'
 
 
@@ -138,9 +140,9 @@ class Router:
             self.generation += 1
             self.enabled, self.mapping = enabled, mapping.copy()
 
-    def submit(self, button):
+    def submit(self, button, held_seconds=0):
         with self.lock:
-            request = (self.generation, time.monotonic(), self.native.window(), button)
+            request = (self.generation, time.monotonic(), self.native.window(), button, held_seconds)
         try:
             self.requests.put_nowait(request)
         except queue.Full:
@@ -165,14 +167,16 @@ class Router:
             try:
                 foreground = self.native.foreground()
                 context = self.classifier.classify(foreground.process, foreground.url)
-                media = self.native.media() in (4, 5) if context == 'other' else False
+                # Volume must not wait for a missing or slow media broker.
+                volume_request = request is not None and request[3] in ('upper', 'lower')
+                media = None if volume_request else self.native.media() in (4, 5) if context == 'other' else False
                 current = (context, media)
                 if current != last_context:
                     self.results.put(dict(kind='context', context=context, media_available=media))
                     last_context = current
                 if request is None:
                     continue
-                generation, started, window, button = request
+                generation, started, window, button, held_seconds = request
                 with self.lock:
                     enabled = self.enabled and generation == self.generation
                     mapping = self.mapping.copy()
@@ -196,15 +200,18 @@ class Router:
                     self.results.put(dict(kind='skipped', reason='stale-focus'))
                     continue
                 commands = {'track-previous': 1, 'track-next': 2, 'play-pause': 3}
+                details = {}
                 if action in commands:
                     if not self.native.media(commands[action], window):
                         self.results.put(dict(kind='skipped', reason='media-control-unavailable'))
                         continue
                 elif action in ('volume-up', 'volume-down'):
-                    self.native.volume(1 if action == 'volume-up' else -1)
+                    step = 10 if held_seconds >= 3 else 5
+                    level = self.native.volume((step // 5) * (1 if action == 'volume-up' else -1))
+                    details = dict(volume_step=step, volume_percent=level, held_seconds=round(held_seconds, 3))
                 else:
                     self.send_key(action)
-                self.results.put(dict(kind='action', button=button, action=action, context=context))
+                self.results.put(dict(kind='action', button=button, action=action, context=context, **details))
             except Exception as exc:
                 # Disable immediately, before another queued button can emit anything.
                 self.configure(False, {})

@@ -25,8 +25,15 @@ class ContextTests(unittest.TestCase):
         for button, action in [('left', 'track-previous'), ('right', 'track-next'),
                                ('center', 'play-pause'), ('upper', 'volume-up'), ('lower', 'volume-down')]:
             self.assertEqual(choose_action('other', button, mapping, True), action)
-            self.assertEqual(choose_action('other', button, mapping, False), 'none')
+            self.assertEqual(choose_action('other', button, mapping, False), action if button in ('upper', 'lower') else 'none')
             self.assertEqual(choose_action('unknown', button, mapping, True), 'none')
+
+    def test_volume_without_player_preserves_presentation_priority(self):
+        for button, action in [('upper', 'volume-up'), ('lower', 'volume-down')]:
+            self.assertEqual(choose_action('other', button, DEFAULTS, None), action)
+            for context in ('powerpoint', 'google', 'xaringan'):
+                self.assertEqual(choose_action(context, button, DEFAULTS, False), DEFAULTS[button])
+            self.assertEqual(choose_action('unknown', button, DEFAULTS, False), 'none')
 
     def test_foreground_process_and_google_url(self):
         classify = Classifier().classify
@@ -57,10 +64,27 @@ class ContextTests(unittest.TestCase):
                     if result['kind'] == 'action': break
                 self.assertEqual(keys, [action] if action else [])
                 self.assertEqual(volumes, [1] if button == 'upper' else [-1] if button == 'lower' else [])
+                if button in ('upper', 'lower'): self.assertEqual(calls, [])
                 self.assertEqual([c for c in calls if c[0]], [(command, 123)] if command else [])
                 if process == 'POWERPNT.EXE': self.assertEqual(calls, [])
             finally:
                 router.stop()
+
+    def test_volume_accelerates_at_three_seconds_and_short_press_resets(self):
+        volumes = []
+        native = SimpleNamespace(window=lambda: 123,
+            foreground=lambda: SimpleNamespace(window=123, process='notepad.exe', url=''),
+            media=lambda: 0, volume=lambda direction: volumes.append(direction) or 50)
+        with patch('tools.context_jx05.Windows', return_value=native):
+            router = Router(lambda action: self.fail('Unexpected keyboard input'))
+        try:
+            router.configure(True, DEFAULTS)
+            for button, duration in [('upper',2.99), ('upper',3), ('lower',4), ('upper',0)]:
+                router.submit(button, duration)
+                while router.results.get(timeout=2)['kind'] != 'action': pass
+            self.assertEqual(volumes, [1,2,-2,1])
+        finally:
+            router.stop()
 
     def test_disable_or_focus_change_discards_inflight_button(self):
         for disable in (True, False):

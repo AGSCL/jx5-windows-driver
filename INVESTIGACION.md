@@ -1411,3 +1411,64 @@ Paquete: build/JX05-0.2.0-win-x64.zip, SHA256
 Baseline anterior al reinicio real en .jx05-monitor/app-reboot-baseline.json;
 tarea exportada en task-installed-app.xml. Se espera el reinicio manual del
 usuario para confirmar un inicio real de sesión; no se da esa prueba por hecha.
+
+### Inicio real verificado y volumen independiente (0.2.1)
+
+Tras volver el usuario, Windows informó LastBootUpTime 2026-11-06T01:45:48.500Z,
+posterior al baseline 00:06:07.500Z. La tarea corrió a 01:46:00Z y el monitor
+PID6544 inició a 01:46:06.850Z, con started_enabled=true, presenter_enabled=true
+y sin errores. Ya había recibido 183 informes y ejecutado 17 acciones. Jx05Mtu
+seguía Running y BitLocker On. Se actualizó app-reboot-baseline.json con esta
+evidencia. No se inició ni habilitó manualmente el monitor para esa comprobación.
+
+El usuario observó que sin VLC no funcionaba el volumen. La regla anterior
+condicionaba todos los controles residuales a un reproductor disponible.
+0.2.1 permite superior/inferior para volumen en contexto other aunque no haya
+sesión musical; evita consultar el servicio multimedia para esas órdenes.
+Presentaciones siguen teniendo prioridad, ventanas desconocidas siguen inactivas
+y pistas/pausa siguen requiriendo reproductor. Pasan 54 pruebas Python.
+Se reconstruyó e instaló el paquete conservando mapeo, tarea y controlador.
+ZIP build/JX05-0.2.1-win-x64.zip, SHA256
+0BE945E255AE74A6C981D5A6E48351975F1379C3C2DBFDCB72809A0B3BD88652.
+Pendiente en este punto confirmar físicamente el volumen sin VLC.
+
+La comprobación física posterior confirmó ambas direcciones sin reproductor
+disponible (consulta nativa media=0): el usuario mantuvo inferior unos tres
+segundos y confirmó descenso repetido y parada al soltar; también mantuvo
+superior y confirmó subida repetida y parada al soltar. El registro contiene
+las órdenes volume-down y cinco volume-up durante la pulsación superior de
+22:58:46 a 22:58:49, sin errores. Hubo pulsaciones adicionales del usuario,
+por lo que no se atribuye el nivel final a una única pulsación.
+Pasan las 14 pruebas de gestos/contexto; reproducir las capturas reales de
+superior/inferior mantenidos produjo respectivamente 4 y 6 órdenes de volumen
+con media_available=False. No se cambiaron código, controlador ni arranque
+durante esta validación. La versión 0.2.1 queda activa.
+
+### Piloto 0.2.2: aceleración de volumen
+
+El usuario pidió pasos de 10 puntos por repetición al mantener tres segundos
+o más, conservando 5 para pulsaciones cortas. Se mide duración únicamente en
+los informes ID3 de repetición de superior/inferior, conservando la cuenta entre
+los ceros internos del firmware. Silencio superior a un segundo, cambio de
+dirección, otro gesto o reinicio del decodificador reinician la cuenta. No hay
+una señal independiente inequívoca de liberación física: el umbral se mide
+desde el primer informe de repetición recibido, no desde el contacto mecánico.
+
+Router transporta la duración y aplica paso 10 solo al volumen; las diapositivas
+siguen generando una acción por gesto. JxVolume admite dos pasos de 5 puntos en
+una única operación Core Audio y conserva límites 0..100. El registro incluye
+volume_step, volume_percent y held_seconds. Pasan 56 pruebas, con frontera 2.99/3,
+ambas direcciones, regreso a pulsación corta, duplicados y liberaciones internas.
+DLL de usuario compilada con /W4 /WX, SHA256
+414C0F075B11D2429A7BA9E228B69B08B4A624B9F72DAEF049DB3DC41B1796EA.
+Se actualizó la instalación a 0.2.2, PID1980, activa y sin errores; kernel intacto.
+
+En la prueba física solicitada, la captura registró tres descensos de 5 puntos,
+40→35→30→25, con duraciones 0, 0.733 y 1.483 segundos. Aunque el usuario contestó
+que terminó, esa captura no demuestra alcanzar el umbral de 3 segundos ni el
+regreso posterior a 5. Se informó esta limitación y se conserva como pendiente
+de validación física, sin darla por aprobada. El usuario pidió cerrar una versión
+funcional preliminar empaquetada.
+
+Paquete preliminar: build/JX05-0.2.2-win-x64.zip, SHA256
+A9AEBAABDFA617F1826E3C7311097D47D9CF9DB325DD52C9D9EE77C0B8F2312A.
