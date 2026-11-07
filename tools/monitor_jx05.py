@@ -183,14 +183,20 @@ def send_key(action):
         raise RuntimeError(f'SendInput aceptó {sent}/{len(batch)} eventos; revisar permisos de la aplicación en primer plano')
 
 
-def run(start_enabled=False):
+def run(start_enabled=False, backend='raw-input'):
     try:
-        from .capture_raw_hid import run as capture_raw
+        if backend == 'bumble':  # escenario B: dongle WinUSB + Bumble, sin driver de kernel
+            from .capture_bumble_hid import run as capture_raw
+        else:
+            from .capture_raw_hid import run as capture_raw
         from .jx05_gestures import Gestures
         from .map_jx05 import load as load_mapping
         from .context_jx05 import Router
     except ImportError:
-        from capture_raw_hid import run as capture_raw
+        if backend == 'bumble':
+            from capture_bumble_hid import run as capture_raw
+        else:
+            from capture_raw_hid import run as capture_raw
         from jx05_gestures import Gestures
         from map_jx05 import load as load_mapping
         from context_jx05 import Router
@@ -220,7 +226,7 @@ def run(start_enabled=False):
                   'started': datetime.now(timezone.utc).isoformat(), 'started_enabled': start_enabled,
                   'capture': 'SIN_SUSCRIPCION', 'subscriptions': [], 'packets': 0,
                   'last_packet': None, 'presenter_enabled': start_enabled, 'retry_seconds': 0, 'error': None,
-                  'actions': 0, 'last_action': None, 'backend': 'raw-input'}
+                  'actions': 0, 'last_action': None, 'backend': backend}
         decoder = Gestures()
         mapping = load_mapping()
         status['mapping'] = mapping
@@ -292,7 +298,7 @@ def run(start_enabled=False):
                     logger.info('PRESENTADOR %s', request['enabled'])
             save()
 
-        logger.info('INICIO: Raw Input; controles=%s; sin cambios de controlador', start_enabled)
+        logger.info('INICIO: %s; controles=%s; sin cambios de controlador', backend, start_enabled)
         try:
             capture_raw(on_event=on_event, on_tick=tick, stopped=lambda: (STATE / 'stop').exists(), vendor_only=True)
         finally:
@@ -321,6 +327,8 @@ def main():
     modes.add_argument('--show-status', action='store_true')
     modes.add_argument('--self-test', action='store_true')
     parser.add_argument('--enabled', action='store_true', help='Habilitar controles al iniciar --run')
+    parser.add_argument('--backend', choices=('raw-input', 'bumble'), default='raw-input',
+                        help='Fuente de informes: raw-input (escenario A) o bumble (escenario B)')
     args = parser.parse_args()
     if args.enabled and not args.run:
         parser.error('--enabled requiere --run')
@@ -353,14 +361,14 @@ def main():
         print('Parada solicitada. Esperar running=false.')
     elif args.presenter_on or args.presenter_off:
         state = json.loads((STATE / 'status.json').read_text(encoding='utf-8'))
-        if not state.get('running') or state.get('backend') != 'raw-input':
+        if not state.get('running') or state.get('backend') not in ('raw-input', 'bumble'):
             raise SystemExit('El monitor HID no está activo.')
         pending = STATE / 'presenter-command.tmp'
         pending.write_text(json.dumps({'pid': state['pid'], 'enabled': args.presenter_on}), encoding='utf-8')
         pending.replace(STATE / 'presenter-command.json')
         print('Orden enviada; comprobar presenter_enabled en --status.')
     else:
-        run(args.enabled)
+        run(args.enabled, *([args.backend] if args.backend != 'raw-input' else []))
 
 
 if __name__ == '__main__':

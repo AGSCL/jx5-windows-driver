@@ -53,7 +53,7 @@ class ContextTests(unittest.TestCase):
             native = SimpleNamespace(window=lambda: 123,
                 foreground=lambda: SimpleNamespace(window=123, process=process, url=''),
                 media=lambda command=0, window=0: calls.append((command, window)) or (5 if command == 0 else 1),
-                volume=volumes.append)
+                volume=lambda direction: volumes.append(direction) or 50)
             with patch('tools.context_jx05.Windows', return_value=native):
                 router = Router(keys.append)
             try:
@@ -63,26 +63,33 @@ class ContextTests(unittest.TestCase):
                     result = router.results.get(timeout=2)
                     if result['kind'] == 'action': break
                 self.assertEqual(keys, [action] if action else [])
-                self.assertEqual(volumes, [1] if button == 'upper' else [-1] if button == 'lower' else [])
+                self.assertEqual([v for v in volumes if v], [1] if button == 'upper' else [-1] if button == 'lower' else [])
                 if button in ('upper', 'lower'): self.assertEqual(calls, [])
                 self.assertEqual([c for c in calls if c[0]], [(command, 123)] if command else [])
                 if process == 'POWERPNT.EXE': self.assertEqual(calls, [])
             finally:
                 router.stop()
 
-    def test_volume_accelerates_at_three_seconds_and_short_press_resets(self):
+    def test_volume_accelerates_with_hold_and_short_press_resets(self):
+        self._volume_run(50, [('upper', 0.99), ('upper', 1), ('upper', 2), ('lower', 4), ('upper', 0)],
+                         [1, 1, 1, 2, 1, -2, -1, 1])
+
+    def test_volume_below_twenty_percent_stays_fine(self):
+        self._volume_run(19, [('upper', 0), ('upper', 5), ('lower', 5)], [1, 1, -1])
+
+    def _volume_run(self, level, presses, expected):
         volumes = []
         native = SimpleNamespace(window=lambda: 123,
             foreground=lambda: SimpleNamespace(window=123, process='notepad.exe', url=''),
-            media=lambda: 0, volume=lambda direction: volumes.append(direction) or 50)
+            media=lambda: 0, volume=lambda direction: volumes.append(direction) or level)
         with patch('tools.context_jx05.Windows', return_value=native):
             router = Router(lambda action: self.fail('Unexpected keyboard input'))
         try:
             router.configure(True, DEFAULTS)
-            for button, duration in [('upper',2.99), ('upper',3), ('lower',4), ('upper',0)]:
+            for button, duration in presses:
                 router.submit(button, duration)
                 while router.results.get(timeout=2)['kind'] != 'action': pass
-            self.assertEqual(volumes, [1,2,-2,1])
+            self.assertEqual([v for v in volumes if v], expected)  # 0 es la consulta del nivel
         finally:
             router.stop()
 

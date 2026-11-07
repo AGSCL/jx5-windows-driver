@@ -1,0 +1,135 @@
+"""ESCENARIO B (sin driver propio): informes del JX-05 por Bumble sobre un dongle en WinUSB.
+
+Misma interfaz que capture_raw_hid.run, para reutilizar monitor_jx05. Emite 'report' con el
+ID de informe delante (como Raw Input), para que Gestures los decodifique igual.
+Requiere el dongle (UB500) en WinUSB y el anillo libre; ver INVESTIGACION.md.
+"""
+import asyncio
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import traceback
+
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault('BUMBLE_RTK_FIRMWARE_DIR', str(ROOT / '.jx05-monitor' / 'rtk-firmware'))
+TRANSPORT = os.environ.get('JX05_BUMBLE_TRANSPORT', 'usb:2357:0604')
+ADDRESS = os.environ.get('JX05_RING_ADDRESS', 'B7:FC:01:C6:F3:7E')
+HID, REPORT, REPORT_REFERENCE = '1812', '2A4D', '2908'
+INPUT_REPORT = 1  # Report Reference: [id, tipo]; solo tipo 1 (Input) llega por notificacion.
+
+
+def emit(event, **fields):
+    print(json.dumps(dict(time=datetime.now(timezone.utc).isoformat(), event=event, **fields)), flush=True)
+
+
+def with_report_id(reference, value):
+    """Antepone el ID de informe; None si la referencia no es de un Input Report."""
+    if len(reference) != 2 or reference[1] != INPUT_REPORT:
+        return None
+    return bytes([reference[0]]) + bytes(value)
+
+
+async def relax_link(connection, on_event):
+    """Enlace relajado (menos escuchas del anillo, menos bateria). Medido: el modo rapido tardaba 1.7 s
+    en activarse y solo ganaba ~30 ms, asi que no se usa. Si el anillo lo rechaza, queda como esta."""
+    try:  # intervalo 30-60 ms, latencia del periferico 4, timeout 2000 ms (> 2 * 5 * 60 ms)
+        await asyncio.wait_for(connection.update_parameters(30, 60, 4, 2000), 5)
+        on_event('link_mode', mode='relaxed')
+    except Exception as exc:  # shortcut: sin reintento ni reversion
+        on_event('link_mode_unavailable', detail=type(exc).__name__)
+
+
+async def _session(device, on_event, stop, retry=5):
+    from bumble.core import BaseError as BumbleError, TimeoutError as BumbleTimeout  # este ultimo no hereda de BaseError
+    from bumble.device import Peer
+    from bumble.hci import HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR
+
+    while not stop.is_set():
+        connection = None
+        try:
+            connection = await device.connect(f'{ADDRESS}/P', timeout=15)
+            peer = Peer(connection)
+            await asyncio.wait_for(peer.discover_all(), 15)  # a veces no responde: se reintenta abajo
+            dropped = asyncio.Event()
+            connection.on('disconnection', lambda *_: dropped.set())
+            count = 0
+            for service in peer.services:
+                if service.uuid.to_hex_str() != HID:
+                    continue
+                for char in service.characteristics:
+                    if char.uuid.to_hex_str() != REPORT:
+                        continue
+                    await peer.discover_descriptors(char)
+                    ref = next((d for d in char.descriptors if d.type.to_hex_str() == REPORT_REFERENCE), None)
+                    if ref is None:
+                        continue
+                    reference = bytes(await peer.read_value(ref))
+                    if with_report_id(reference, b'') is None:
+                        continue
+                    await peer.subscribe(char, lambda value, r=reference: on_event(
+                        'report', device=f'bumble:{ADDRESS}', hex=with_report_id(r, value).hex()))
+                    count += 1
+            if not count:
+                raise RuntimeError('El servicio HID no ofrecio Input Reports')
+            on_event('ready', backend='bumble', subscriptions=count)
+            await relax_link(connection, on_event)
+            stopping = asyncio.ensure_future(stop.wait())
+            await asyncio.wait([stopping, asyncio.ensure_future(dropped.wait())], return_when=asyncio.FIRST_COMPLETED)
+            stopping.cancel()
+            if not stop.is_set():
+                on_event('device_change')  # reinicia el decodificador de gestos
+        except (asyncio.TimeoutError, asyncio.CancelledError, BumbleError, BumbleTimeout, ConnectionError, OSError) as exc:
+            if stop.is_set():
+                break
+            on_event('retry', detail=type(exc).__name__)
+        finally:
+            if connection is not None:
+                try:
+                    await connection.disconnect(HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR)
+                except Exception:  # ya desconectado
+                    pass
+        try:
+            await asyncio.wait_for(stop.wait(), retry)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _run(on_event, on_tick, stopped):
+    from bumble.device import Device
+    from bumble.transport import open_transport
+
+    stop = asyncio.Event()
+
+    async def ticker():
+        while not stop.is_set():
+            if on_tick:
+                on_tick()
+            if stopped and stopped():
+                stop.set()
+            await asyncio.sleep(0.5)
+
+    tick = asyncio.ensure_future(ticker())
+    try:
+        async with await open_transport(TRANSPORT) as (source, sink):
+            device = Device.with_hci('jx05', 'F0:F1:F2:F3:F4:F5', source, sink)
+            await device.power_on()
+            await _session(device, on_event, stop)
+        on_event('stopped', failed=False)
+        return 0
+    except Exception:
+        on_event('error', detail=traceback.format_exc())
+        on_event('stopped', failed=True)
+        return 1
+    finally:
+        stop.set()
+        tick.cancel()
+
+
+def run(on_event=emit, on_tick=None, stopped=None, *, vendor_only=False):
+    """vendor_only se acepta por compatibilidad con Raw Input y no tiene efecto aqui."""
+    return asyncio.run(_run(on_event, on_tick, stopped))
+
+
+if __name__ == '__main__':
+    raise SystemExit(run())

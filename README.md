@@ -188,3 +188,30 @@ controlador funcionando y BitLocker protegido.
 No confundir una prueba de decodificación con una prueba de presentación real.
 
 [Investigación y evidencia](INVESTIGACION.md) · [Filtro, instalación y reversión](driver/README.md)
+
+## Escenarios de uso (no mezclar)
+
+El anillo solo admite **un central a la vez**: A y B son excluyentes para el mismo anillo.
+Las pruebas, hashes y tareas pendientes de cada uno están en [INVESTIGACION.md](INVESTIGACION.md).
+
+| | **A. Raw Input + filtro de kernel** (actual, instalable) | **B. Bumble + dongle WinUSB** (prototipo) |
+| --- | --- | --- |
+| Bluetooth usado | Adaptador interno MediaTek | Dongle USB dedicado (TP-Link UB500, RTL8761B) |
+| Corrección del MTU / Report Map | Filtro `jx05mtu.sys` en kernel | Bumble en modo usuario (MTU 23, sin driver propio) |
+| Modo de prueba (testsigning) | **Necesario** hasta tener firma de Microsoft | Sin driver propio; **no verificado sin testsigning** (WinUSB vía Zadig) |
+| Lectura de botones | `tools/capture_raw_hid.py` (Raw Input) | `tools/capture_bumble_hid.py` (notificaciones GATT) |
+| Arranque | `JX05.exe` / `monitor_jx05.py --run` | `python tools/monitor_jx05.py --run --backend bumble` (entorno `.jx05-monitor/venv-bumble`) |
+| Windows ve el anillo | Sí (HID vendor FF00:0001) | No (solo Bumble lo atiende) |
+| Estado | Validado en uso y empaquetado | Informes reales recibidos (257 en 40 s, idénticos a Raw Input); sin empaquetar |
+
+**Escenario B, requisitos:** dongle UB500 asignado a WinUSB (Zadig), firmware Realtek con
+`python tools/get_rtk_firmware.py`, dependencias de `tools/requirements-bumble.txt`, anillo libre
+y sin emparejar con Windows. El adaptador interno sigue disponible para ratón y audífonos.
+Variables opcionales: `JX05_BUMBLE_TRANSPORT` (por defecto `usb:2357:0604`) y `JX05_RING_ADDRESS`.
+Reversión: desinstalar WinUSB del dongle en el Administrador de dispositivos.
+**No cubierto aún:** instalador, arranque automático, reconexión tras suspensión prolongada
+y la prueba sin modo de prueba.
+
+**Limitación de firma del escenario A:** la aplicación no necesita testsigning, pero el filtro sí.
+Sin él Windows no abre el servicio HID a aplicaciones, ni con el driver genérico
+(INVESTIGACION.md, «Alternativas al modo de prueba»).

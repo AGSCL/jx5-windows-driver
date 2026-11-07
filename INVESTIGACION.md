@@ -1472,3 +1472,260 @@ funcional preliminar empaquetada.
 
 Paquete preliminar: build/JX05-0.2.2-win-x64.zip, SHA256
 A9AEBAABDFA617F1826E3C7311097D47D9CF9DB325DD52C9D9EE77C0B8F2312A.
+
+## Alternativas al modo de prueba (2026-11-05)
+
+El usuario no dispone de presupuesto para la firma de Microsoft y no quiere
+depender de testsigning. Se evaluó si el anillo puede usarse sin el filtro
+`jx05mtu.sys`. Conclusión: no hay vía gratuita demostrada.
+
+### Por qué hace falta firma
+
+`jx05mtu.sys` es un filtro de kernel (`jx05mtu.inf`, clase Extension, firmante
+`JX05 Local Driver Test`). Windows 11 x64 solo carga drivers de kernel firmados
+por Microsoft (atestación o WHCP, que exige certificado EV y cuenta en Partner
+Center) salvo con `bcdedit /set testsigning on`, que persiste tras reiniciar,
+muestra la marca de agua y requiere Secure Boot desactivado. La aplicación
+(`JX05.exe`) no necesita modo de prueba; solo el filtro.
+
+### Prueba: genérico ATT con apertura de solo lectura
+
+Instancia `BTHLEDEVICE\{00001812-...}_DEV_VID&0105AC_PID&0220_REV&0110_B7FC01C6F37E\A&49E30AC&23&0023`.
+Con administrador (elevado desde la sesión), `select_ring_driver.py --apply generic`
+instaló `bthleenum.inf` sin reinicio. Con `probe_gatt_session.py --native-hid` y
+`--native-register`:
+
+| Operación | Resultado |
+| --- | --- |
+| Abrir dispositivo (handle de dispositivo) | OK; 7 servicios, 12 características HID |
+| Interfaz de servicio `6e3bb679-...` | Existe; `CreateFileW` solo lectura: Win32 5, acceso denegado |
+| Interfaz HID `00001812-...` | Existe; `CreateFileW` solo lectura: Win32 5, acceso denegado |
+| `BluetoothGATTRegisterEvent` en los 6 Report notificables | `0x80070001` en todos; CCCD no modificado |
+
+Esto descarta que el fallo anterior (lectura/escritura) fuera por el modo de
+apertura: Windows reserva el servicio HID (`1812`) para su pila y no lo abre a
+aplicaciones, tampoco con el genérico y con administrador. Se ejecutó
+`--apply restore` en el mismo script (bloque `finally`); `pnputil` confirmó
+`hidbthle.inf`, estado Iniciado. Sin reinicio ni cambios en archivos del sistema.
+
+### Prueba: leer el HID estándar de Windows sin el filtro
+
+No se ejecutó la retirada del filtro: las notas ya muestran que con el driver
+original el servicio HID arranca con código 10 y no hay interfaz HID. Hoy los
+informes de Raw Input (por ejemplo `0107f40119`) existen solo porque el filtro
+corrige el MTU. Un intento de captura con `capture_raw_hid.py` falló porque
+`JX05.exe` ya mantenía el mutex `Local\JX05RawCapture`; no se interfirió con la app.
+
+### Hipótesis UMDF: investigada, descartada en la práctica
+
+Hipótesis: un driver de modo usuario (UMDF) podría firmarse con certificado propio
+y evitar testsigning. Análisis de `driver/jx05mtu.c` y `driver/README.md`:
+
+- **El filtro no actúa sobre el anillo sino sobre el adaptador Bluetooth USB**
+  (`USB\VID_13D3&PID_3567&REV_0100&MI_00`, con BTHUSB y MTKBTFilterX64). Es un
+  filtro inferior KMDF que intercepta `IOCTL_INTERNAL_USB_SUBMIT_URB`, reescribe
+  la oferta ATT MTU (527 → 23) y los bloques del Report Map (atributo 0x0042)
+  dentro de paquetes HCI/L2CAP crudos.
+- **Eso no es reproducible en modo usuario.** Los URB son IOCTL internos que solo
+  circulan entre drivers de kernel. Ni la API GATT de Windows ni UMDF exponen
+  tráfico HCI crudo. (Las búsquedas no hallaron una afirmación de Microsoft que
+  prohíba explícitamente ese IOCTL en UMDF 2; la conclusión se apoya en que UMDF
+  corre en modo usuario y en el diseño del filtro, no en una cita definitiva.)
+- **La firma tampoco está clara.** Foros de OSR indican que en Windows 11 el
+  almacén Trusted Publishers ya no basta, que hay que usar Trusted Root de la
+  máquina y que fuera de testsigning todo driver debe ir firmado por Microsoft.
+  Fuentes anecdóticas, sin documento oficial.
+- Dependencia añadida: el filtro está atado a este adaptador MediaTek; con otro
+  adaptador Bluetooth el filtro no se aplicaría.
+
+Conclusión: sin pagar la firma de Microsoft, el modo de prueba sigue siendo la
+única vía demostrada. No se instaló ni cambió nada en el sistema.
+
+Fuentes: [OSR: USB lower filter](https://community.osr.com/t/usb-or-hid-lower-level-filter-drivers/41884),
+[OSR: firma UMDF2 Windows 11](https://community.osr.com/discussion/comment/303962),
+[OSR: Trusted Publishers](https://community.osr.com/t/windows-11-and-alternative-driver-installation-method-in-libwdi/57493).
+
+### Estado y opciones
+
+1. Uso inmediato y gratuito: mantener testsigning (estado actual, activo).
+2. Distribución normal: certificado EV y atestación de Microsoft; coste y plazos
+   fuera del alcance actual.
+3. Sin driver propio: sin vía demostrada tras las pruebas anteriores.
+
+### Vía WinUSB + Bumble: preparación (2026-11-05, sin hardware)
+
+Estado del PC: un solo adaptador Bluetooth (MediaTek interno, `USB\VID_13D3&PID_3567`),
+sin dongle de repuesto. Asignarlo a WinUSB dejaría al sistema sin Bluetooth y exige
+UAC, así que **no se aplicó**. Preparado sin tocar el sistema:
+
+- venv aislado `.jx05-monitor/venv-bumble` (excluido de Git): bumble 0.0.236,
+  libusb-package 1.0.26.4, pyusb 1.3.1.
+- `tools/bumble_ring_probe.py`: conecta con el anillo (dirección pública), no pide
+  otro MTU (queda en 23), lee el Report Map con lectura larga y se suscribe a los
+  Report 2A4D. Compila y las funciones de Bumble usadas existen; **no se ha ejecutado
+  contra hardware**. Si el anillo exige cifrado, falta añadir `connection.pair()`.
+
+Prueba pendiente (requiere un dongle USB Bluetooth adicional): asignarle WinUSB con
+Zadig, comprobar que Windows 11 lo acepta sin testsigning y ejecutar
+`.jx05-monitor\venv-bumble\Scripts\python tools\bumble_ring_probe.py usb:0 B7:FC:01:C6:F3:7E 30`.
+Reversión: desinstalar el driver WinUSB del dongle desde el Administrador de dispositivos.
+
+### Dongle recomendado y firmware Realtek (2026-11-06)
+
+Receptores revisados en el PC y descartados como adaptadores Bluetooth: Philips/«2.4G
+Mouse» (`USB\VID_1EA7&PID_0066`) y Logitech Unifying (`VID_046D&PID_C52B`/`C52F`) son
+receptores propietarios de 2.4 GHz, no Bluetooth. Sigue habiendo un único adaptador
+Bluetooth (MediaTek interno).
+
+**Dongle recomendado: TP-Link UB500** (Bluetooth 5.0, Realtek RTL8761B, USB `2357:0604`).
+Comprobado en el paquete instalado de Bumble 0.0.236: `(0x2357, 0x0604)` está en
+`RTK_USB_PRODUCTS` (`bumble/drivers/rtk.py`), con firmware `rtl8761bu_fw.bin` y
+`rtl8761bu_config.bin`. No se probó con el dongle físico, no se verificaron precios en
+Chile y Bumble se declara alfa. Alternativa con el mismo chip: ASUS USB-BT500. Evitar
+clones CSR8510. El anillo solo necesita BLE.
+
+**Firmware.** Los chips Realtek reciben el firmware desde el host; con WinUSB no lo
+carga Windows, lo hace Bumble. Preparado sin subir binarios a Git:
+
+- `tools/get_rtk_firmware.py` descarga desde linux-firmware (kernel.org), verifica
+  SHA-256 fijos y la firma `Realtech`, y escribe en `.jx05-monitor/rtk-firmware/`
+  (ignorada por Git). Hashes (2026-11-06): `rtl8761bu_fw.bin` (44 484 bytes)
+  `1d7a9597349ad89344fa16c1913d3e39e9a12e966e417ca16871bc79bbe59edb`;
+  `rtl8761bu_config.bin` (6 bytes)
+  `6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f`.
+- Nota: `bumble-rtk-fw-download` falla en este entorno (`from tools import rtk_util`,
+  importación pensada para el árbol de fuentes), y kernel.org responde 403 al
+  User-Agent por defecto de Python; el script usa uno genérico.
+- `tools/bumble_ring_probe.py` fija `BUMBLE_RTK_FIRMWARE_DIR` a esa carpeta; se
+  comprobó que Bumble localiza el firmware.
+- `tools/requirements-bumble.txt` fija bumble 0.0.236 y libusb-package 1.0.26.4.
+
+**Pasos con el dongle (pendientes):**
+1. `python -m venv .jx05-monitor\venv-bumble` y `pip install -r tools\requirements-bumble.txt`.
+2. `python tools\get_rtk_firmware.py`.
+3. Conectar el UB500; comprobar el ID USB en solo lectura (`Get-PnpDevice`).
+4. Asignarlo a WinUSB con Zadig y comprobar que Windows 11 lo acepta sin testsigning
+   (duda principal, sin verificar).
+5. `python tools\bumble_ring_probe.py usb:0 B7:FC:01:C6:F3:7E 30`, con el anillo libre.
+
+Reversión: desinstalar el driver WinUSB del dongle en el Administrador de dispositivos.
+El Bluetooth interno (ratón, audífonos) no se toca.
+
+### Resultado: Bumble + UB500 + WinUSB funciona con el anillo (2026-11-07)
+
+Dongle TP-Link UB500 (`USB\VID_2357&PID_0604`) asignado a WinUSB (servicio `WinUSB`,
+clase USBDevice). `tools/bumble_ring_probe.py usb:2357:0604 B7:FC:01:C6:F3:7E 30`,
+sin driver propio ni filtro de kernel:
+
+- Bumble abrió el dongle por libusb, cargó el firmware Realtek y conectó con el anillo
+  (dirección pública, rol central, MTU ATT por defecto 23).
+- Leyó el **Report Map completo de 126 bytes** (`050c0901a101850315002501...`), lo que
+  Windows no conseguía por el MTU.
+- Activó el CCCD de los Report y recibió **notificaciones de botones/gestos** (handle
+  0x0027, p. ej. `07f4611d`, `00bc421f`), muchas por segundo en gestos táctiles.
+- Intermitencia: el descubrimiento GATT no respondió en 2 de 4 ejecuciones. El script
+  ahora reintenta hasta 3 veces (15 s por intento). Causa no determinada.
+- Correcciones al script: había que descubrir los descriptores (CCCD) antes de
+  `subscribe()` y la constante de desconexión es `HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR`.
+
+**Limitaciones de esta evidencia:**
+- Testsigning seguía activo (`testsigning Yes`). Esta prueba demuestra que el camino
+  funciona, **no** que Windows 11 acepte WinUSB para este dongle sin modo de prueba
+  (Zadig usa catálogo autofirmado). Pendiente: repetirlo con testsigning desactivado.
+- El MediaTek interno aparecía con Código 31 (`CM_PROB_FAILED_ADD`) y el JX-05 no
+  figuraba presente en Windows durante la prueba; causa sin investigar.
+- Falta portar la lectura de botones de la app (hoy por Raw Input) a estas
+  notificaciones.
+
+### Lector Bumble integrado en el monitor (2026-11-07)
+
+Se delimitan dos escenarios (ver README, «Escenarios de uso»): **A** Raw Input con el filtro
+de kernel y **B** Bumble con dongle WinUSB. El escenario A no se modificó: `--backend` vale
+`raw-input` por defecto y las 58 pruebas pasan.
+
+- `tools/capture_bumble_hid.py`: misma interfaz que `capture_raw_hid.run`. Descubre los
+  Report 2A4D, lee el Report Reference (2908) de cada uno para anteponer el ID de informe
+  (Raw Input lo entrega; GATT no) y se suscribe a los de tipo Input. Reconecta tras
+  desconexión o tiempo agotado y emite `device_change` para reiniciar el decodificador.
+- `tools/monitor_jx05.py --run --backend bumble` lo usa; `status.json` registra el backend.
+- `tests/test_capture_bumble_hid.py`: prefijo de ID y referencias no válidas.
+- Prueba real (40 s, UB500 en WinUSB): 6 suscripciones, 257 informes; los primeros,
+  `0107f40119` y `0100f40119`, coinciden con los de Raw Input. Un primer intento de
+  conexión caducó y el lector reintentó solo. Hallazgo: `bumble.core.TimeoutError` no
+  hereda de `BaseError`; hay que capturarlo por separado.
+- Sin probar: monitor completo con acciones (teclas, volumen) por este backend, reposo
+  prolongado del anillo, y funcionamiento sin testsigning.
+
+#### Prueba del monitor completo con `--backend bumble` (2026-11-07 19:25)
+
+`monitor_jx05.py --run --enabled --backend bumble`, UB500 en WinUSB, 45 s de uso físico:
+233 informes, 13 acciones, sin errores y parada limpia (`running=false`). Gestos reconocidos:
+upper, lower, left, right y center; upper/lower generaron `volume-up`/`volume-down` con paso 5
+(`volume_percent` 0↔5). Left/right/center no emitieron acción porque no había sesión
+multimedia (`media_available=false`), igual que en el escenario A. Un primer intento (60 s)
+había terminado con 0 informes sin que se pulsara nada; no se atribuyó a un fallo.
+El volumen del sistema quedó modificado por la prueba. Todavía sin probar: PowerPoint real,
+reproductor con sesión multimedia, reposo prolongado y ausencia de testsigning.
+
+#### Pruebas de uso real con `--backend bumble` (2026-11-07, 19:28-19:46)
+
+Una sola sesión continua del monitor (UB500 en WinUSB, controles activos): 477 informes,
+76 acciones, sin errores, un único evento `ready` (sin reconexiones).
+
+| Prueba | Resultado |
+| --- | --- |
+| Volumen sin reproductor, con aceleración al mantener | Correcto (hasta 100 %) |
+| PowerPoint (avanzar, retroceder, presentar) | Correcto, contexto `powerpoint` |
+| Google Slides (avanzar, retroceder, pantalla completa) | Correcto, contexto `google` |
+| Reproductor/YouTube | Órdenes enviadas (`track-next`, `play-pause`); YouTube sin lista o Premium no reacciona, no es fallo del anillo |
+| Reposo | 279 s sin tocar (19:41:18 a 19:45:57) y respuesta inmediata, sin `retry` ni `ready` nuevo |
+
+Sigue sin probarse: reposo de horas, suspensión/hibernación del PC, y funcionamiento sin
+testsigning (requiere reiniciar; el usuario prefirió no hacerlo por ahora).
+
+#### Volumen progresivo (2026-11-07)
+
+El firmware repite el gesto cada ~0,75 s (~7 puntos/s con paso 5; ~15 s de 0 a 100). Con la regla
+anterior (10 solo tras 3 s) casi no se notaba la aceleración. Ahora `volume_step()` en
+`tools/context_jx05.py` usa 5 puntos por repetición, 10 desde 1 s mantenido y 15 desde 2 s
+(~20 puntos/s), y siempre 5 por debajo del 20 % de volumen para mantener precisión en niveles
+bajos. Se consulta el nivel con `JxVolume(0)` y los pasos de 15 se aplican en dos llamadas
+(la DLL admite ±2 unidades de 5 por llamada; no se recompiló). Pasan 59 pruebas. Sin validar
+aún con el anillo físico.
+
+#### Fluidez del volumen (2026-11-07, 19:51 y siguientes)
+
+Medición en `events.log` manteniendo superior/inferior: el firmware repite el gesto **cada 0,75 s
+exactos** (más un informe de liberación 30 ms después) y la acción de volumen llega entre 0,09 y
+0,42 s tras el informe, por la consulta de ventana activa en cada solicitud (en navegadores incluye
+leer la URL). La cadencia de 0,75 s no se puede cambiar desde el host. Para suavizar, cada repetición
+se reparte en pasos de 5 espaciados 0,75/n s (n = 1..3), con el mismo total por repetición y por
+tanto sin más desbordamiento al soltar; se abortan si se desactiva el control o se cierra el monitor.
+Pasan 59 pruebas. Sin validar de nuevo con el anillo.
+
+#### Enlace adaptativo y volumen híbrido (2026-11-07, 20:00-20:02)
+
+- `Link` en `tools/capture_bumble_hid.py`: tras suscribirse, enlace **relajado** (intervalo 30-60 ms,
+  latencia del periférico 4, timeout 2000 ms; Bumble usa por defecto 15-30 ms y latencia 0) para que el
+  anillo escuche menos en reposo. Con el primer informe pasa a **rápido** (15-30 ms, latencia 0) y
+  vuelve a relajado tras 4 s sin informes. Si el anillo rechaza un cambio, se deja el enlace como está y
+  se emite `link_mode_unavailable`. Ahorro de batería no medido (no hay forma de leerla desde el PC).
+- Ciclo observado: relajado 20:00:33, rápido 20:01:58, relajado 20:02:20. **El paso a rápido tardó
+  ~1,7 s** desde el primer informe (20:01:56,7), así que no ayuda a los primeros gestos; con enlace
+  relajado el retraso añadido de las notificaciones es como mucho ~60 ms.
+- Volumen: la mitad del salto (redondeada hacia arriba) se aplica al instante y el resto se reparte en
+  el intervalo de 0,75 s del firmware (15 puntos = 10 inmediatos + 5 a los 0,375 s). Mismo total por
+  repetición. Subida mantenida observada: 20 → 30 → 45 → 60 → 75 en ~2 s.
+- 60 pruebas pasan (nueva: transiciones y rechazo del enlace).
+
+#### Cierre de la sesión Bumble (2026-11-07)
+
+Decisión final tras medir: el modo de enlace rápido se **eliminó**. Tardaba ~1,7 s en activarse y solo
+ganaba ~30 ms por notificación; queda un único ajuste relajado (`relax_link`: 30-60 ms, latencia del
+periférico 4, timeout 2000 ms) que se aplica al conectar y es tolerante a que el anillo lo rechace. El
+volumen híbrido (mitad inmediata, resto repartido en 0,75 s) y la escala 5/10/15 con paso 5 bajo 20 %
+se mantienen. 60 pruebas pasan.
+
+Estado al cierre: escenario B funcional con UB500 en WinUSB (volumen, PowerPoint, Google Slides, reproductor,
+reposo de ~4,5 min). Pendiente: probar sin testsigning (requiere reiniciar), reposo de horas,
+suspensión/hibernación, ahorro de batería real, e instalador/arranque automático del escenario B.

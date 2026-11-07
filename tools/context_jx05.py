@@ -14,6 +14,13 @@ BROWSERS = {'chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'opera.exe'}
 MARKER = re.compile(rb'remark\s*\.\s*create\s*\(|remark-slide-container|remark-slide-content|remark-latest(?:\.min)?\.js', re.I)
 
 
+def volume_step(held_seconds, level):
+    """Puntos por repeticion: 5, 10 (>=1 s) o 15 (>=2 s); siempre 5 por debajo del 20 %."""
+    if level < 20:
+        return 5
+    return 15 if held_seconds >= 2 else 10 if held_seconds >= 1 else 5
+
+
 def choose_action(context, button, mapping, media_available):
     if context in ('powerpoint', 'google', 'xaringan'):
         action = mapping[button]
@@ -206,8 +213,19 @@ class Router:
                         self.results.put(dict(kind='skipped', reason='media-control-unavailable'))
                         continue
                 elif action in ('volume-up', 'volume-down'):
-                    step = 10 if held_seconds >= 3 else 5
-                    level = self.native.volume((step // 5) * (1 if action == 'volume-up' else -1))
+                    step = volume_step(held_seconds, self.native.volume(0))
+                    sign, units = (1 if action == 'volume-up' else -1), step // 5
+                    # El anillo repite cada 0.75 s: la mitad del salto se aplica al instante (respuesta) y el
+                    # resto se reparte en ese intervalo (fluidez); mismo total, sin mas desbordamiento al soltar.
+                    first = (units + 1) // 2
+                    level = self.native.volume(sign * first)  # JxVolume admite como maximo +-2 unidades por llamada
+                    for _ in range(units - first):
+                        if self.closed.wait(0.75 / (units - first + 1)):
+                            break
+                        with self.lock:
+                            if not self.enabled or generation != self.generation:
+                                break
+                        level = self.native.volume(sign)
                     details = dict(volume_step=step, volume_percent=level, held_seconds=round(held_seconds, 3))
                 else:
                     self.send_key(action)
