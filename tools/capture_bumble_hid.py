@@ -23,6 +23,10 @@ def emit(event, **fields):
     print(json.dumps(dict(time=datetime.now(timezone.utc).isoformat(), event=event, **fields)), flush=True)
 
 
+class NoInputReports(RuntimeError):
+    """Descubrimiento GATT incompleto: se reintenta como un fallo de enlace."""
+
+
 def with_report_id(reference, value):
     """Antepone el ID de informe; None si la referencia no es de un Input Report."""
     if len(reference) != 2 or reference[1] != INPUT_REPORT:
@@ -41,8 +45,10 @@ async def relax_link(connection, on_event):
 
 
 async def _session(device, on_event, stop, retry=5):
-    from bumble.core import BaseError as BumbleError, TimeoutError as BumbleTimeout  # este ultimo no hereda de BaseError
+    # BaseBumbleError cubre BaseError, TimeoutError, CommandTimeoutError, InvalidStateError...
+    from bumble.core import BaseBumbleError
     from bumble.device import Peer
+    from bumble.transport.common import TransportLostError
     from bumble.hci import HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR
 
     while not stop.is_set():
@@ -71,7 +77,7 @@ async def _session(device, on_event, stop, retry=5):
                         'report', device=f'bumble:{ADDRESS}', hex=with_report_id(r, value).hex()))
                     count += 1
             if not count:
-                raise RuntimeError('El servicio HID no ofrecio Input Reports')
+                raise NoInputReports('El servicio HID no ofrecio Input Reports')
             on_event('ready', backend='bumble', subscriptions=count)
             await relax_link(connection, on_event)
             stopping = asyncio.ensure_future(stop.wait())
@@ -79,7 +85,10 @@ async def _session(device, on_event, stop, retry=5):
             stopping.cancel()
             if not stop.is_set():
                 on_event('device_change')  # reinicia el decodificador de gestos
-        except (asyncio.TimeoutError, asyncio.CancelledError, BumbleError, BumbleTimeout, ConnectionError, OSError) as exc:
+        except TransportLostError:
+            raise  # dongle desenchufado: reintentar sobre un transporte muerto no sirve
+        except (asyncio.TimeoutError, BaseBumbleError, NoInputReports, ConnectionError, OSError) as exc:
+            # CancelledError no se captura: Ctrl+C y la cancelacion externa deben detener el bucle.
             if stop.is_set():
                 break
             on_event('retry', detail=type(exc).__name__)
@@ -100,14 +109,20 @@ async def _run(on_event, on_tick, stopped):
     from bumble.transport import open_transport
 
     stop = asyncio.Event()
+    tick_failed = []
 
     async def ticker():
-        while not stop.is_set():
-            if on_tick:
-                on_tick()
-            if stopped and stopped():
-                stop.set()
-            await asyncio.sleep(0.5)
+        try:
+            while not stop.is_set():
+                if on_tick:
+                    on_tick()
+                if stopped and stopped():
+                    stop.set()
+                await asyncio.sleep(0.5)
+        except Exception:  # sin esto, una excepcion aqui deja de vigilar el archivo de parada
+            tick_failed.append(True)
+            on_event('error', detail=traceback.format_exc())
+            stop.set()
 
     tick = asyncio.ensure_future(ticker())
     try:
@@ -115,8 +130,8 @@ async def _run(on_event, on_tick, stopped):
             device = Device.with_hci('jx05', 'F0:F1:F2:F3:F4:F5', source, sink)
             await device.power_on()
             await _session(device, on_event, stop)
-        on_event('stopped', failed=False)
-        return 0
+        on_event('stopped', failed=bool(tick_failed))
+        return int(bool(tick_failed))
     except Exception:
         on_event('error', detail=traceback.format_exc())
         on_event('stopped', failed=True)

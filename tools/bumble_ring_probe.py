@@ -32,7 +32,7 @@ async def main(transport, address, seconds):
             try:
                 await asyncio.wait_for(peer.discover_all(), 15)
                 break
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except asyncio.TimeoutError:  # CancelledError no: Ctrl+C debe terminar la prueba
                 print(f"SIN_RESPUESTA_GATT intento {attempt + 1}/3; reconectando", flush=True)
                 await connection.disconnect(HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR)
                 await asyncio.sleep(2)

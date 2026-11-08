@@ -1,6 +1,45 @@
 import asyncio
 import unittest
-from tools.capture_bumble_hid import relax_link, with_report_id
+from tools.capture_bumble_hid import NoInputReports, _session, relax_link, with_report_id
+
+try:
+    from bumble.core import CommandTimeoutError
+    from bumble.transport.common import TransportLostError
+except ImportError:  # bumble solo esta en .jx05-monitor/venv-bumble
+    CommandTimeoutError = None
+
+
+def run_session(error):
+    """Ejecuta _session con un connect que siempre falla; para tras el primer 'retry'."""
+    events = []
+
+    class Device:
+        async def connect(self, *args, **kwargs):
+            raise error
+
+    async def main():
+        stop = asyncio.Event()
+
+        def on_event(event, **fields):
+            events.append((event, fields.get('detail')))
+            stop.set()
+
+        await _session(Device(), on_event, stop, retry=0)
+
+    asyncio.run(main())
+    return events
+
+
+@unittest.skipIf(CommandTimeoutError is None, 'requiere bumble')
+class BumbleSessionTests(unittest.TestCase):
+    def test_retries_recoverable_link_errors(self):
+        for error in (CommandTimeoutError(), NoInputReports(), asyncio.TimeoutError()):
+            self.assertEqual(run_session(error), [('retry', type(error).__name__)])
+
+    def test_cancellation_and_lost_transport_are_not_swallowed(self):
+        for error in (asyncio.CancelledError(), TransportLostError()):
+            with self.assertRaises(type(error)):
+                run_session(error)
 
 
 class BumbleReportTests(unittest.TestCase):
