@@ -36,6 +36,19 @@ class BumbleSessionTests(unittest.TestCase):
         for error in (CommandTimeoutError(), NoInputReports(), asyncio.TimeoutError()):
             self.assertEqual(run_session(error), [('retry', type(error).__name__)])
 
+    def test_missing_dongle_propagates_after_reporting(self):
+        from unittest import mock
+        from tools import capture_bumble_hid
+        events = []
+
+        async def no_dongle(name):
+            raise OSError('UB500 no encontrado')
+
+        with mock.patch('bumble.transport.open_transport', no_dongle):
+            with self.assertRaises(OSError):
+                capture_bumble_hid.run(on_event=lambda event, **f: events.append((event, f.get('failed'))))
+        self.assertEqual([e for e in events if e[0] == 'stopped'], [('stopped', True)])
+
     def test_cancellation_and_lost_transport_are_not_swallowed(self):
         for error in (asyncio.CancelledError(), TransportLostError()):
             with self.assertRaises(type(error)):
@@ -49,7 +62,8 @@ class BumbleReportTests(unittest.TestCase):
         self.assertEqual(with_report_id(bytes([3, 1]), b'\x01\x02\x03').hex(), '03010203')
 
     def test_ignores_non_input_or_malformed_references(self):
-        for reference in (bytes([1, 2]), bytes([1, 3]), b'\x01', b'', b'\x01\x01\x00'):
+        for reference in (bytes([1, 2]), bytes([1, 3]), b'\x01', b'', b'\x01\x01\x00',
+                          bytes([2, 1]), bytes([4, 1]), bytes([5, 1]), bytes([6, 1])):
             self.assertIsNone(with_report_id(reference, b'\x00'))
 
     def test_relax_link_requests_slow_parameters_and_tolerates_rejection(self):

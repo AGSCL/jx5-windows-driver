@@ -17,6 +17,7 @@ TRANSPORT = os.environ.get('JX05_BUMBLE_TRANSPORT', 'usb:2357:0604')
 ADDRESS = os.environ.get('JX05_RING_ADDRESS', 'B7:FC:01:C6:F3:7E')
 HID, REPORT, REPORT_REFERENCE = '1812', '2A4D', '2908'
 INPUT_REPORT = 1  # Report Reference: [id, tipo]; solo tipo 1 (Input) llega por notificacion.
+DECODED_IDS = (1, 3)  # los unicos Input del Report Map; Raw Input nunca entrega 2, 4, 5 ni 6 a Gestures
 
 
 def emit(event, **fields):
@@ -28,8 +29,8 @@ class NoInputReports(RuntimeError):
 
 
 def with_report_id(reference, value):
-    """Antepone el ID de informe; None si la referencia no es de un Input Report."""
-    if len(reference) != 2 or reference[1] != INPUT_REPORT:
+    """Antepone el ID de informe; None si no es un Input Report que Gestures decodifique."""
+    if len(reference) != 2 or reference[1] != INPUT_REPORT or reference[0] not in DECODED_IDS:
         return None
     return bytes([reference[0]]) + bytes(value)
 
@@ -135,7 +136,7 @@ async def _run(on_event, on_tick, stopped):
     except Exception:
         on_event('error', detail=traceback.format_exc())
         on_event('stopped', failed=True)
-        return 1
+        raise  # como Raw Input: monitor_jx05 escribe startup-error.txt y sale con codigo distinto de 0
     finally:
         stop.set()
         tick.cancel()
