@@ -15,7 +15,8 @@ Expand-Archive -LiteralPath $runtimeZip -DestinationPath (Join-Path $out 'runtim
 $pth = @('python315.zip', '.', '../tools') + @(if ($Bumble) { 'site' })
 $pth | Set-Content (Join-Path $out 'runtime/python315._pth') -Encoding ASCII
 $tools = @('capture_raw_hid.py','context_jx05.py','jx05_gestures.py','map_jx05.py','monitor_jx05.py','paths_jx05.py','monitor_logon.ps1')
-if ($Bumble) { $tools += 'capture_bumble_hid.py' }
+if ($Bumble) { $tools += 'capture_bumble_hid.py', 'get_rtk_firmware.py' }
+$(if ($Bumble) { 'bumble' } else { 'raw-input' }) | Set-Content (Join-Path $out 'backend.txt') -Encoding ASCII
 foreach ($name in $tools) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $out 'tools')
 }

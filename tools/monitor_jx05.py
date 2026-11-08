@@ -244,7 +244,9 @@ def run(start_enabled=False, backend='raw-input'):
         def on_event(event, **fields):
             logger.info('%s %s', event, json.dumps(fields))
             if event == 'ready':
-                status.update(capture='ESCUCHANDO_HID', connection='ESPERANDO_INFORMES')
+                status.update(capture='ESCUCHANDO_HID', connection='ESPERANDO_INFORMES', error=None)
+            elif event == 'retry':
+                status['error'] = fields['detail']
             elif event == 'device_change':
                 decoder.reset()
                 router.configure(status['presenter_enabled'], mapping)
@@ -328,9 +330,9 @@ def main():
     modes.add_argument('--show-status', action='store_true')
     modes.add_argument('--self-test', action='store_true')
     parser.add_argument('--enabled', action='store_true', help='Habilitar controles al iniciar --run')
-    # El paquete Bumble trae rtk-firmware/; asi JX05.exe y la tarea no necesitan --backend.
+    # Cada paquete escribe su backend, incluso al actualizar sobre otra variante.
     parser.add_argument('--backend', choices=('raw-input', 'bumble'),
-                        default='bumble' if (ROOT / 'rtk-firmware').is_dir() else 'raw-input',
+                        default=(ROOT / 'backend.txt').read_text(encoding='ascii').strip() if (ROOT / 'backend.txt').is_file() else 'raw-input',
                         help='Fuente de informes: raw-input (escenario A) o bumble (escenario B)')
     args = parser.parse_args()
     if args.enabled and not args.run:
@@ -349,7 +351,8 @@ def main():
             if not libusb_package.get_library_path():
                 raise SystemExit('Falta libusb-1.0.dll')
             firmware = Path(os.environ['BUMBLE_RTK_FIRMWARE_DIR'])
-            missing = [name for name in ('rtl8761bu_fw.bin', 'rtl8761bu_config.bin') if not (firmware / name).is_file()]
+            from get_rtk_firmware import FILES
+            missing = [Path(name).name for name in FILES if name.endswith('.bin') and not (firmware / Path(name).name).is_file()]
             if missing:
                 raise SystemExit(f'Falta firmware Realtek en {firmware}: {missing}')
         print(f'OK: runtime, DLL, HID decoder, mapping ({args.backend})')

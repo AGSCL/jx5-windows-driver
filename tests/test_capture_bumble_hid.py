@@ -34,7 +34,7 @@ def run_session(error):
 class BumbleSessionTests(unittest.TestCase):
     def test_retries_recoverable_link_errors(self):
         for error in (CommandTimeoutError(), NoInputReports(), asyncio.TimeoutError()):
-            self.assertEqual(run_session(error), [('retry', type(error).__name__)])
+            self.assertEqual(run_session(error), [('retry', f'{type(error).__name__}: {error}')])
 
     def test_missing_dongle_retries_and_can_stop(self):
         from unittest import mock
@@ -90,6 +90,55 @@ class BumbleSessionTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(len(attempts), 2)
         self.assertIn('retry', events)
+
+    def test_stop_interrupts_power_on_and_session(self):
+        from unittest import mock
+        from tools import capture_bumble_hid
+
+        class Transport:
+            async def __aenter__(self):
+                source = mock.Mock()
+                source.terminated = asyncio.get_running_loop().create_future()
+                return source, mock.Mock()
+            async def __aexit__(self, *args):
+                pass
+
+        async def exercise(block_power):
+            entered = asyncio.Event()
+            stop = False
+            async def block(*args):
+                nonlocal stop
+                entered.set()
+                stop = True
+                await asyncio.Event().wait()
+            device = mock.Mock()
+            device.power_on = mock.AsyncMock(side_effect=block if block_power else None)
+            async def open_transport(name): return Transport()
+            with mock.patch('bumble.transport.open_transport', open_transport), \
+                 mock.patch('bumble.device.Device.with_hci', return_value=device), \
+                 mock.patch.object(capture_bumble_hid, '_session', block):
+                result = await asyncio.wait_for(capture_bumble_hid._run(lambda *a, **k: None, None, lambda: stop), 3)
+            self.assertTrue(entered.is_set())
+            self.assertEqual(result, 0)
+
+        for block_power in (True, False):
+            asyncio.run(exercise(block_power))
+
+    def test_missing_firmware_surfaces(self):
+        from unittest import mock
+        from tools import capture_bumble_hid
+        class Transport:
+            async def __aenter__(self): return mock.Mock(), mock.Mock()
+            async def __aexit__(self, *args): pass
+        async def open_transport(name): return Transport()
+        device = mock.Mock()
+        device.power_on = mock.AsyncMock(side_effect=FileNotFoundError('firmware'))
+        events = []
+        with mock.patch('bumble.transport.open_transport', open_transport), \
+             mock.patch('bumble.device.Device.with_hci', return_value=device):
+            with self.assertRaises(FileNotFoundError):
+                capture_bumble_hid.run(on_event=lambda event, **fields: events.append(event))
+        self.assertIn('error', events)
 
     def test_cancellation_and_lost_transport_are_not_swallowed(self):
         for error in (asyncio.CancelledError(), TransportLostError()):

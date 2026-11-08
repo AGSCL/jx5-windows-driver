@@ -94,11 +94,11 @@ async def _session(device, on_event, stop, retry=5):
             # CancelledError no se captura: Ctrl+C y la cancelacion externa deben detener el bucle.
             if stop.is_set():
                 break
-            on_event('retry', detail=type(exc).__name__)
+            on_event('retry', detail=f'{type(exc).__name__}: {exc}')
         finally:
             if connection is not None:
                 try:
-                    await connection.disconnect(HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR)
+                    await asyncio.wait_for(connection.disconnect(HCI_REMOTE_USER_TERMINATED_CONNECTION_ERROR), 2)
                 except Exception:  # ya desconectado
                     pass
         try:
@@ -129,32 +129,47 @@ async def _run(on_event, on_tick, stopped):
             on_event('error', detail=traceback.format_exc())
             stop.set()
 
+    async def transport_session():
+        # OSError al abrir USB es recuperable; el firmware ausente durante power_on no lo es.
+        try:
+            transport = await open_transport(TRANSPORT)
+        except OSError as exc:
+            raise TransportInitError(str(exc)) from exc
+        async with transport as (source, sink):
+            device = Device.with_hci('jx05', 'F0:F1:F2:F3:F4:F5', source, sink)
+            await device.power_on()
+            session = asyncio.create_task(_session(device, on_event, stop))
+            try:
+                done, _ = await asyncio.wait([session, source.terminated], return_when=asyncio.FIRST_COMPLETED)
+                if session in done:
+                    await session
+                else:
+                    raise TransportLostError('transporte USB terminado')
+            finally:
+                session.cancel()
+                await asyncio.gather(session, return_exceptions=True)
+
     tick = asyncio.ensure_future(ticker())
     try:
         while not stop.is_set():
+            task = asyncio.create_task(transport_session())
+            stopping = asyncio.create_task(stop.wait())
             try:
-                async with await open_transport(TRANSPORT) as (source, sink):
-                    device = Device.with_hci('jx05', 'F0:F1:F2:F3:F4:F5', source, sink)
-                    await device.power_on()
-                    session = asyncio.create_task(_session(device, on_event, stop))
+                done, _ = await asyncio.wait([task, stopping], return_when=asyncio.FIRST_COMPLETED)
+                if task in done:
+                    await task
+            except (TransportInitError, TransportLostError, USBError) as exc:
+                if not stop.is_set():
+                    on_event('device_change')
+                    on_event('retry', detail=f'{type(exc).__name__}: {exc}')
                     try:
-                        done, _ = await asyncio.wait([session, source.terminated], return_when=asyncio.FIRST_COMPLETED)
-                        if session in done:
-                            await session
-                        elif not stop.is_set():
-                            raise TransportLostError('transporte USB terminado')
-                    finally:
-                        session.cancel()
-                        await asyncio.gather(session, return_exceptions=True)
-            except (TransportInitError, TransportLostError, USBError, OSError) as exc:
-                if stop.is_set():
-                    break
-                on_event('device_change')
-                on_event('retry', detail=type(exc).__name__)
-                try:
-                    await asyncio.wait_for(stop.wait(), 5)
-                except asyncio.TimeoutError:
-                    pass
+                        await asyncio.wait_for(stop.wait(), 5)
+                    except asyncio.TimeoutError:
+                        pass
+            finally:
+                task.cancel()
+                stopping.cancel()
+                await asyncio.gather(task, stopping, return_exceptions=True)
         on_event('stopped', failed=bool(tick_failed))
         return int(bool(tick_failed))
     except Exception:
