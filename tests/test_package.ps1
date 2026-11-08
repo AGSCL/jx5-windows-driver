@@ -1,7 +1,9 @@
 param([Parameter(Mandatory)][string]$PackagePath)
 $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
-foreach ($script in @('Install.ps1','Uninstall.ps1','Driver.ps1','tools/monitor_logon.ps1')) {
+$bumble = Test-Path (Join-Path $package 'Dongle.ps1')  # paquete portatil (build_app.ps1 -Bumble)
+$hardwareScript = if ($bumble) { 'Dongle.ps1' } else { 'Driver.ps1' }
+foreach ($script in @('Install.ps1','Uninstall.ps1',$hardwareScript,'tools/monitor_logon.ps1')) {
     $tokens = $null; $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $package $script), [ref]$tokens, [ref]$errors)
     if ($errors) { throw "$script : $errors" }
@@ -18,9 +20,9 @@ try {
 } finally { [IO.File]::WriteAllBytes($exe, $original) }
 function Get-PnpDevice { param($Class, [switch]$PresentOnly) return @() }
 try {
-    & (Join-Path $package 'Driver.ps1') -Install -WhatIf
+    if ($bumble) { & (Join-Path $package 'Dongle.ps1') -Prepare } else { & (Join-Path $package 'Driver.ps1') -Install -WhatIf }
     throw 'Se acepto hardware no compatible.'
 } catch {
-    if ($_.Exception.Message -notlike 'Este controlador solo admite*') { throw }
+    if ($_.Exception.Message -notlike 'Este controlador solo admite*' -and $_.Exception.Message -notlike 'Conecta el dongle*') { throw }
 }
 Write-Output 'OK: scripts validos, WhatIf sin cambios, binario alterado y hardware desconocido rechazados.'

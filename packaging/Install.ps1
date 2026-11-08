@@ -65,4 +65,8 @@ $uninstall = '"' + (Join-Path $PSHOME 'powershell.exe') + '" -NoProfile -Executi
 New-ItemProperty $key -Name UninstallString -Value $uninstall -Force | Out-Null
 Start-ScheduledTask -TaskName 'JX05 Monitor'
 Write-Output "Aplicacion instalada en $destination. Datos en $data."
-Write-Output 'El controlador se comprueba/instala aparte con Instalar-controlador.cmd; no se modifica seguridad ni se reinicia Windows.'
+if (Test-Path (Join-Path $PSScriptRoot 'Dongle.ps1')) {
+    try { & (Join-Path $PSScriptRoot 'Dongle.ps1') } catch { Write-Warning $_.Exception.Message }  # solo avisa
+} else {
+    Write-Output 'El controlador se comprueba/instala aparte con Instalar-controlador.cmd; no se modifica seguridad ni se reinicia Windows.'
+}

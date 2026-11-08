@@ -1,26 +1,50 @@
+# -Bumble: paquete portatil para el dongle UB500 en WinUSB (sin controlador de kernel ni modo de prueba).
+param([switch]$Bumble)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
-$version = '0.2.2'
+$version = '0.3.0'
 $runtimeZip = Join-Path $repo '.toolchain/python-3.15.2-embed-amd64.zip'
 if ((Get-FileHash $runtimeZip).Hash -ne 'D012F3AA29CF07436DAE8AEA1FEC0FD195C2612A0B059B1F915AE0AFB9AD1F62') {
     throw 'Falta el runtime oficial verificado. Consulta packaging/LEEME.txt.'
 }
-$out = Join-Path $repo ('build/JX05-' + $version + '-win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$flavor = if ($Bumble) { 'bumble-' } else { '' }
+$out = Join-Path $repo ('build/JX05-' + $version + '-' + $flavor + 'win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory $out | Out-Null
-New-Item -ItemType Directory (Join-Path $out 'runtime'), (Join-Path $out 'tools'), (Join-Path $out 'build/context'), (Join-Path $out 'driver') | Out-Null
+New-Item -ItemType Directory (Join-Path $out 'runtime'), (Join-Path $out 'tools'), (Join-Path $out 'build/context') | Out-Null
 Expand-Archive -LiteralPath $runtimeZip -DestinationPath (Join-Path $out 'runtime')
-@('python315.zip', '.', '../tools') | Set-Content (Join-Path $out 'runtime/python315._pth') -Encoding ASCII
-foreach ($name in @('capture_raw_hid.py','context_jx05.py','jx05_gestures.py','map_jx05.py','monitor_jx05.py','paths_jx05.py','monitor_logon.ps1')) {
+$pth = @('python315.zip', '.', '../tools') + @(if ($Bumble) { 'site' })
+$pth | Set-Content (Join-Path $out 'runtime/python315._pth') -Encoding ASCII
+$tools = @('capture_raw_hid.py','context_jx05.py','jx05_gestures.py','map_jx05.py','monitor_jx05.py','paths_jx05.py','monitor_logon.ps1')
+if ($Bumble) { $tools += 'capture_bumble_hid.py' }
+foreach ($name in $tools) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $out 'tools')
 }
 Copy-Item -LiteralPath (Join-Path $repo 'build/context/jx05_context.dll') -Destination (Join-Path $out 'build/context')
-foreach ($entry in (Get-Content (Join-Path $repo 'build/jx05mtu/hashes.json') -Raw | ConvertFrom-Json)) {
-    $name = Split-Path $entry.Path -Leaf
-    $source = if ($name -eq 'jx05-test.cer') { Join-Path $repo "build/jx05mtu/$name" } else { Join-Path $repo "build/jx05mtu/package/$name" }
-    if ((Get-FileHash $source).Hash -ne $entry.Hash) { throw "El paquete firmado cambio: $name" }
-    Copy-Item -LiteralPath $source -Destination (Join-Path $out 'driver')
+Copy-Item (Join-Path $repo 'packaging/*') -Destination $out -Include *.* -Exclude @(if ($Bumble) { 'Driver.ps1','Instalar-controlador.cmd','LEEME.txt' })
+if ($Bumble) {
+    Copy-Item (Join-Path $repo 'packaging/bumble/*') -Destination $out
+    $python = Join-Path $repo '.jx05-monitor/venv-bumble/Scripts/python.exe'  # solo para pip; el paquete usa su runtime
+    & $python -m pip install --require-hashes -r (Join-Path $PSScriptRoot 'requirements-bumble-win.lock') --target (Join-Path $out 'runtime/site') `
+        --only-binary=:all: --python-version 3.15 --platform win_amd64 --implementation cp --no-compile --disable-pip-version-check -q
+    if ($LASTEXITCODE) { throw 'pip no instalo las dependencias de Bumble' }
+    Remove-Item -Recurse -Force (Join-Path $out 'runtime/site/bin') -ErrorAction SilentlyContinue  # scripts de consola de Bumble con rutas de este PC
+    & $python -I (Join-Path $PSScriptRoot 'get_rtk_firmware.py') (Join-Path $out 'rtk-firmware')
+    if ($LASTEXITCODE) { throw 'Firmware Realtek no verificado' }
+    $zadig = Join-Path $out 'zadig.exe'
+    Invoke-WebRequest 'https://github.com/pbatard/libwdi/releases/download/v1.5.1/zadig-2.9.exe' -OutFile $zadig -UseBasicParsing
+    $signature = Get-AuthenticodeSignature -LiteralPath $zadig
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike '*Akeo Consulting*') { throw 'Zadig sin firma valida de Akeo' }
+    $adapter = 'USB\VID_2357&PID_0604 (WinUSB)'
+} else {
+    New-Item -ItemType Directory (Join-Path $out 'driver') | Out-Null
+    foreach ($entry in (Get-Content (Join-Path $repo 'build/jx05mtu/hashes.json') -Raw | ConvertFrom-Json)) {
+        $name = Split-Path $entry.Path -Leaf
+        $source = if ($name -eq 'jx05-test.cer') { Join-Path $repo "build/jx05mtu/$name" } else { Join-Path $repo "build/jx05mtu/package/$name" }
+        if ((Get-FileHash $source).Hash -ne $entry.Hash) { throw "El paquete firmado cambio: $name" }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $out 'driver')
+    }
+    $adapter = 'USB\VID_13D3&PID_3567&REV_0100&MI_00'
 }
-Copy-Item (Join-Path $repo 'packaging/*') -Destination $out
 $vc = Join-Path $repo '.toolchain/vs/VC/Tools/MSVC/14.44.35207'
 $sdk = Join-Path $repo '.toolchain/sdk/c/Include/10.0.26100.0'
 $libs = Join-Path $repo '.toolchain/sdk-x64/c'
@@ -38,7 +62,7 @@ try {
         $relative = $_.FullName.Substring($out.Length + 1).Replace('\','/')
         $files[$relative] = (Get-FileHash -LiteralPath $_.FullName).Hash
     }
-    @{version=$version; architecture='x64'; ring='B7:FC:01:C6:F3:7E'; adapter='USB\VID_13D3&PID_3567&REV_0100&MI_00'; files=$files} |
+    @{version=$version; architecture='x64'; ring='B7:FC:01:C6:F3:7E'; adapter=$adapter; files=$files} |
         ConvertTo-Json -Depth 5 | Set-Content 'manifest.json' -Encoding UTF8
     Compress-Archive -Path (Join-Path $out '*') -DestinationPath ($out + '.zip')
     Set-Content (Join-Path $repo 'build/latest-package.txt') $out -Encoding UTF8

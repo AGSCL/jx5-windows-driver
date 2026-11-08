@@ -1,0 +1,44 @@
+JX05 Presenter 0.3.0 (Bumble) - paquete portatil para Windows 11 x64
+
+QUE NECESITAS
+- El anillo JX-05 B7:FC:01:C6:F3:7E y el dongle TP-Link UB500 (USB 2357:0604).
+- El anillo NO debe estar emparejado con el Bluetooth de Windows del PC en uso.
+- No necesita Internet, Python, Anaconda, modo de prueba ni controlador propio:
+  el ZIP incluye Python, Bumble, libusb, el firmware Realtek y Zadig.
+
+PRIMERA VEZ EN CADA PC (una sola vez, pide administrador)
+1. Extrae TODO el ZIP (sirve un pendrive). No lo ejecutes desde la vista del ZIP.
+2. Conecta el UB500 y abre Preparar-dongle.cmd. Si el UB500 ya usa WinUSB,
+   lo dice y termina. Si no, abre Zadig y explica los pasos: elegir el USB ID
+   2357 0604 y pulsar Replace Driver. Solo cambia el UB500; el Bluetooth
+   interno del PC sigue igual. En ese PC el UB500 deja de funcionar como
+   Bluetooth normal de Windows hasta que se reinstale su controlador
+   (Administrador de dispositivos > desinstalar el dispositivo).
+
+USAR SIN INSTALAR (PC ajeno)
+- Doble clic en JX05.exe: se inicia oculto con los controles ACTIVOS.
+- Detener.cmd lo para y libera el anillo. Registros en %LOCALAPPDATA%\JX05.
+
+INSTALAR (PC propio: arranque automatico al iniciar sesion)
+- Abre Instalar.cmd con tu usuario habitual (sin administrador). Se instala en
+  %LOCALAPPDATA%\Programs\JX05 y reemplaza la tarea "JX05 Monitor".
+  Inicio > JX05 tiene Iniciar, Activar, Pausar, Estado y Botones.
+- Apps instaladas de Windows > JX05 Presenter lo desinstala.
+
+USO
+Presentacion en primer plano: superior/izquierdo retrocede, inferior/derecho
+avanza; central corto entra/sale de presentacion. Fuera de presentaciones:
+izquierdo/derecho pista, central pausa, superior/inferior volumen de Windows.
+Central >=3 segundos apaga el anillo. Prueba los botones antes de presentar.
+
+SI NO RESPONDE
+- Inicio > JX05 - Estado (o %LOCALAPPDATA%\JX05\status.json). Un error de
+  transporte USB suele indicar que el UB500 no esta en WinUSB: repite
+  Preparar-dongle.cmd. Si el anillo esta emparejado con Windows, quitalo
+  de Configuracion > Bluetooth.
+
+FUENTES Y LICENCIAS
+- CPython: https://www.python.org/downloads/release/python-3152/ (runtime/LICENSE.txt)
+- Bumble (Apache-2.0) y dependencias: runtime/site (cada una con su licencia).
+- Firmware Realtek RTL8761BU de linux-firmware; aviso en rtk-firmware/LICENCE.rtlwifi_firmware.txt.
+- Zadig/libwdi (GPLv3, Akeo Consulting): codigo fuente en https://github.com/pbatard/libwdi

@@ -36,7 +36,7 @@ class BumbleSessionTests(unittest.TestCase):
         for error in (CommandTimeoutError(), NoInputReports(), asyncio.TimeoutError()):
             self.assertEqual(run_session(error), [('retry', type(error).__name__)])
 
-    def test_missing_dongle_propagates_after_reporting(self):
+    def test_missing_dongle_retries_and_can_stop(self):
         from unittest import mock
         from tools import capture_bumble_hid
         events = []
@@ -44,10 +44,52 @@ class BumbleSessionTests(unittest.TestCase):
         async def no_dongle(name):
             raise OSError('UB500 no encontrado')
 
+        def on_event(event, **fields):
+            events.append((event, fields.get('failed')))
+
         with mock.patch('bumble.transport.open_transport', no_dongle):
-            with self.assertRaises(OSError):
-                capture_bumble_hid.run(on_event=lambda event, **f: events.append((event, f.get('failed'))))
-        self.assertEqual([e for e in events if e[0] == 'stopped'], [('stopped', True)])
+            result = capture_bumble_hid.run(on_event=on_event, stopped=lambda: ('retry', None) in events)
+        self.assertEqual(result, 0)
+        self.assertIn(('device_change', None), events)
+        self.assertIn(('retry', None), events)
+        self.assertEqual(events[-1], ('stopped', False))
+
+    def test_lost_transport_is_reopened(self):
+        from unittest import mock
+        from tools import capture_bumble_hid
+        events, attempts = [], []
+
+        class Transport:
+            async def __aenter__(self):
+                source = mock.Mock()
+                source.terminated = asyncio.get_running_loop().create_future()
+                return source, mock.Mock()
+            async def __aexit__(self, *args):
+                pass
+
+        async def open_transport(name):
+            attempts.append(name)
+            if len(attempts) == 1:
+                raise TransportLostError()
+            return Transport()
+
+        async def session(device, on_event, stop):
+            stop.set()
+
+        async def timeout(awaitable, timeout):
+            awaitable.close()
+            raise asyncio.TimeoutError
+
+        device = mock.Mock()
+        device.power_on = mock.AsyncMock()
+        with mock.patch('bumble.transport.open_transport', open_transport), \
+             mock.patch('bumble.device.Device.with_hci', return_value=device), \
+             mock.patch.object(capture_bumble_hid, '_session', session), \
+             mock.patch.object(capture_bumble_hid.asyncio, 'wait_for', new=timeout):
+            result = capture_bumble_hid.run(on_event=lambda event, **fields: events.append(event))
+        self.assertEqual(result, 0)
+        self.assertEqual(len(attempts), 2)
+        self.assertIn('retry', events)
 
     def test_cancellation_and_lost_transport_are_not_swallowed(self):
         for error in (asyncio.CancelledError(), TransportLostError()):

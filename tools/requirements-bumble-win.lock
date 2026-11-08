@@ -1,0 +1,19 @@
+# Generado 2026-11-08 con pip download --only-binary=:all: --python-version 3.15 --platform win_amd64.
+# Lo usa tools/build_app.ps1 -Bumble (pip --require-hashes). Regenerar si cambia requirements-bumble.txt.
+bumble==0.0.236 --hash=sha256:e31b0f9fc49112538638040f38bfb19feefd7a5038340fc33f1607372f342052
+cffi==2.1.1 --hash=sha256:e6e8cff14d6fb0be70a09c0bdc58096f501952d04624ebf867e0e56da2df8960
+click==8.5.1 --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37
+cryptography==50.0.2 --hash=sha256:c423ab384a46c4dff7217b2ea5ba2e11cffdeab6441acd04cf65a369caf0366c
+importlib-resources==7.1.0 --hash=sha256:1bd7b48b4088eddb2cd16382150bb515af0bd2c70128194392725f82ad2c96a1
+libusb1==3.4.0 --hash=sha256:b7dcc1f324a895af6aac708bc5513a17373f97349cc2ab8a277519c788bd18ca
+libusb-package==1.0.26.4 --hash=sha256:cd8c1f5df3906444ba6eff82ef44a75515b0444b76bba8abf21cc8569637af63
+platformdirs==4.14.5 --hash=sha256:8e778c6fa421516f4d3369449f8df3b0e1b72c0e0005fe88e3ec772d0a14e750
+prompt-toolkit==3.0.53 --hash=sha256:01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2
+pycparser==3.12 --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e
+pyee==16.0.1 --hash=sha256:756e8d455970f8c5598e760495ec9195c6d31a64beb3f3f666662fc169804076
+pyserial==3.5 --hash=sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0
+pyserial-asyncio==0.6 --hash=sha256:de9337922619421b62b9b1a84048634b3ac520e1d690a674ed246a2af7ce1fc5
+pyusb==1.3.1 --hash=sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430
+typing-extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+wcwidth==0.9.4 --hash=sha256:f28d77153303450ee13ebbe888297e75cf532c754555b6cabafc9bdda16c421c
+websockets==17.4 --hash=sha256:8b45d40f07081b377f0b837ddbfba4a9ab4a89a7b569d3c095436564e767a27b

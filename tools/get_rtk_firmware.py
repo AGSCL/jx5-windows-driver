@@ -9,18 +9,21 @@ import sys
 import urllib.request
 from pathlib import Path
 
-BASE = "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/rtl_bt/"
+BASE = "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/"
 FILES = {  # shortcut: hashes de la versión de 2026-11-06; si linux-firmware cambia, revisar y actualizar.
-    "rtl8761bu_fw.bin": "1d7a9597349ad89344fa16c1913d3e39e9a12e966e417ca16871bc79bbe59edb",
-    "rtl8761bu_config.bin": "6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f",
+    "rtl_bt/rtl8761bu_fw.bin": "1d7a9597349ad89344fa16c1913d3e39e9a12e966e417ca16871bc79bbe59edb",
+    "rtl_bt/rtl8761bu_config.bin": "6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f",
+    # La licencia exige reproducir este aviso al redistribuir los binarios (paquete portatil).
+    "LICENSES/LICENCE.rtlwifi_firmware.txt": "a61351665b4f264f6c631364f85b907d8f8f41f8b369533ef4021765f9f3b62e",
 }
 
 
 def main(dest):
     dest.mkdir(parents=True, exist_ok=True)
-    for name, digest in FILES.items():
+    for path, digest in FILES.items():
+        name = path.rsplit("/", 1)[1]
         # kernel.org devuelve 403 al User-Agent por defecto de Python.
-        request = urllib.request.Request(BASE + name, headers={"User-Agent": "curl/8"})
+        request = urllib.request.Request(BASE + path, headers={"User-Agent": "curl/8"})
         data = urllib.request.urlopen(request, timeout=30).read()
         if hashlib.sha256(data).hexdigest() != digest:
             sys.exit(f"HASH_DISTINTO: {name}; no se guarda. Revisar linux-firmware.")

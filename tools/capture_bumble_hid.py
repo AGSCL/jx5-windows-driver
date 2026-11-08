@@ -12,7 +12,9 @@ from pathlib import Path
 import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
-os.environ.setdefault('BUMBLE_RTK_FIRMWARE_DIR', str(ROOT / '.jx05-monitor' / 'rtk-firmware'))
+PACKAGED_FIRMWARE = ROOT / 'rtk-firmware'  # paquete portatil (build_app.ps1 -Bumble)
+os.environ.setdefault('BUMBLE_RTK_FIRMWARE_DIR', str(
+    PACKAGED_FIRMWARE if PACKAGED_FIRMWARE.is_dir() else ROOT / '.jx05-monitor' / 'rtk-firmware'))
 TRANSPORT = os.environ.get('JX05_BUMBLE_TRANSPORT', 'usb:2357:0604')
 ADDRESS = os.environ.get('JX05_RING_ADDRESS', 'B7:FC:01:C6:F3:7E')
 HID, REPORT, REPORT_REFERENCE = '1812', '2A4D', '2908'
@@ -108,6 +110,8 @@ async def _session(device, on_event, stop, retry=5):
 async def _run(on_event, on_tick, stopped):
     from bumble.device import Device
     from bumble.transport import open_transport
+    from bumble.transport.common import TransportInitError, TransportLostError
+    from usb1 import USBError
 
     stop = asyncio.Event()
     tick_failed = []
@@ -127,10 +131,30 @@ async def _run(on_event, on_tick, stopped):
 
     tick = asyncio.ensure_future(ticker())
     try:
-        async with await open_transport(TRANSPORT) as (source, sink):
-            device = Device.with_hci('jx05', 'F0:F1:F2:F3:F4:F5', source, sink)
-            await device.power_on()
-            await _session(device, on_event, stop)
+        while not stop.is_set():
+            try:
+                async with await open_transport(TRANSPORT) as (source, sink):
+                    device = Device.with_hci('jx05', 'F0:F1:F2:F3:F4:F5', source, sink)
+                    await device.power_on()
+                    session = asyncio.create_task(_session(device, on_event, stop))
+                    try:
+                        done, _ = await asyncio.wait([session, source.terminated], return_when=asyncio.FIRST_COMPLETED)
+                        if session in done:
+                            await session
+                        elif not stop.is_set():
+                            raise TransportLostError('transporte USB terminado')
+                    finally:
+                        session.cancel()
+                        await asyncio.gather(session, return_exceptions=True)
+            except (TransportInitError, TransportLostError, USBError, OSError) as exc:
+                if stop.is_set():
+                    break
+                on_event('device_change')
+                on_event('retry', detail=type(exc).__name__)
+                try:
+                    await asyncio.wait_for(stop.wait(), 5)
+                except asyncio.TimeoutError:
+                    pass
         on_event('stopped', failed=bool(tick_failed))
         return int(bool(tick_failed))
     except Exception:

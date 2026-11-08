@@ -8,6 +8,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
 import queue
 import time
 try:
@@ -327,7 +328,9 @@ def main():
     modes.add_argument('--show-status', action='store_true')
     modes.add_argument('--self-test', action='store_true')
     parser.add_argument('--enabled', action='store_true', help='Habilitar controles al iniciar --run')
-    parser.add_argument('--backend', choices=('raw-input', 'bumble'), default='raw-input',
+    # El paquete Bumble trae rtk-firmware/; asi JX05.exe y la tarea no necesitan --backend.
+    parser.add_argument('--backend', choices=('raw-input', 'bumble'),
+                        default='bumble' if (ROOT / 'rtk-firmware').is_dir() else 'raw-input',
                         help='Fuente de informes: raw-input (escenario A) o bumble (escenario B)')
     args = parser.parse_args()
     if args.enabled and not args.run:
@@ -340,7 +343,16 @@ def main():
         Windows()  # Load DLL and check every exported binding without emitting input.
         Gestures()
         load()
-        print('OK: runtime, DLL, HID decoder and mapping')
+        if args.backend == 'bumble':  # sin abrir el dongle: dependencias, libusb y firmware
+            import capture_bumble_hid
+            import bumble.drivers.rtk, bumble.transport.usb, libusb_package
+            if not libusb_package.get_library_path():
+                raise SystemExit('Falta libusb-1.0.dll')
+            firmware = Path(os.environ['BUMBLE_RTK_FIRMWARE_DIR'])
+            missing = [name for name in ('rtl8761bu_fw.bin', 'rtl8761bu_config.bin') if not (firmware / name).is_file()]
+            if missing:
+                raise SystemExit(f'Falta firmware Realtek en {firmware}: {missing}')
+        print(f'OK: runtime, DLL, HID decoder, mapping ({args.backend})')
     elif args.status or args.show_status:
         path = STATE / 'status.json'
         content = path.read_text(encoding='utf-8') if path.exists() else 'Sin estado registrado.'
