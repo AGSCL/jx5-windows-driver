@@ -140,10 +140,28 @@ class BumbleSessionTests(unittest.TestCase):
                 capture_bumble_hid.run(on_event=lambda event, **fields: events.append(event))
         self.assertIn('error', events)
 
-    def test_cancellation_and_lost_transport_are_not_swallowed(self):
-        for error in (asyncio.CancelledError(), TransportLostError()):
-            with self.assertRaises(type(error)):
-                run_session(error)
+    def test_lost_transport_is_not_swallowed(self):
+        with self.assertRaises(TransportLostError):
+            run_session(TransportLostError())
+
+    def test_internal_cancel_mid_connect_retries(self):
+        # Asi falla el anillo al caerse durante discover_all: Bumble cancela su futuro pendiente.
+        self.assertEqual(run_session(asyncio.CancelledError()),
+                         [('retry', 'CancelledError: el anillo se desconecto durante la conexion')])
+
+    def test_task_cancellation_is_not_swallowed(self):
+        class Device:
+            async def connect(self, *args, **kwargs):
+                await asyncio.sleep(10)
+
+        async def main():
+            task = asyncio.create_task(_session(Device(), lambda *a, **k: None, asyncio.Event(), retry=0))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            await task
+
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(main())
 
 
 class BumbleReportTests(unittest.TestCase):

@@ -90,6 +90,12 @@ async def _session(device, on_event, stop, retry=5):
                 on_event('device_change')  # reinicia el decodificador de gestos
         except TransportLostError:
             raise  # dongle desenchufado: reintentar sobre un transporte muerto no sirve
+        except asyncio.CancelledError:
+            # Bumble cancela la peticion GATT pendiente si el anillo se cae a mitad de la conexion;
+            # solo una cancelacion de esta tarea (Ctrl+C, cierre del transporte) debe detener el bucle.
+            if asyncio.current_task().cancelling() or stop.is_set():
+                raise
+            on_event('retry', detail='CancelledError: el anillo se desconecto durante la conexion')
         except (asyncio.TimeoutError, BaseBumbleError, NoInputReports, ConnectionError, OSError) as exc:
             # CancelledError no se captura: Ctrl+C y la cancelacion externa deben detener el bucle.
             if stop.is_set():

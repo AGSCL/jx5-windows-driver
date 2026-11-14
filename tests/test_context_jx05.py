@@ -120,6 +120,26 @@ class ContextTests(unittest.TestCase):
                 release.set()
                 router.stop()
 
+    def test_failed_foreground_lookup_skips_without_disabling(self):
+        keys = []
+        calls = iter([RuntimeError('Foreground HRESULT=80010108')])
+        def foreground():
+            failure = next(calls, None)
+            if failure: raise failure
+            return SimpleNamespace(window=123, process='POWERPNT.EXE', url='')
+        native = SimpleNamespace(window=lambda: 123, foreground=foreground)
+        with patch('tools.context_jx05.Windows', return_value=native):
+            router = Router(keys.append)
+        try:
+            router.configure(True, DEFAULTS)
+            router.submit('right')
+            self.assertEqual(router.results.get(timeout=2)['kind'], 'skipped')
+            router.submit('right')
+            while router.results.get(timeout=2)['kind'] != 'action': pass
+            self.assertEqual(len(keys), 1)
+        finally:
+            router.stop()
+
     def test_tab_change_in_same_window_does_not_emit(self):
         keys = []
         pages = iter(['https://docs.google.com/presentation/d/a/edit', 'https://example.test/'])

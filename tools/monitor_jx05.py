@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import queue
 import time
+import traceback
 try:
     from .paths_jx05 import ROOT, STATE
 except ImportError:
@@ -389,7 +390,8 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception as exc:
+    except BaseException as exc:  # pythonw has no stderr: CancelledError/SystemExit would otherwise vanish
         STATE.mkdir(parents=True, exist_ok=True)
-        (STATE / 'startup-error.txt').write_text(f'{datetime.now(timezone.utc).isoformat()} {exc}', encoding='utf-8')
+        (STATE / 'startup-error.txt').write_text(
+            f'{datetime.now(timezone.utc).isoformat()} {exc!r}\n{traceback.format_exc()}', encoding='utf-8')
         raise

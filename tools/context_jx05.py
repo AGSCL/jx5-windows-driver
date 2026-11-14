@@ -172,8 +172,14 @@ class Router:
             if not enabled:
                 continue
             try:
-                foreground = self.native.foreground()
-                context = self.classifier.classify(foreground.process, foreground.url)
+                try:
+                    foreground = self.native.foreground()
+                except RuntimeError as exc:
+                    # Transient (80010108 RPC disconnected, 80070005 elevated window): skip, don't pause controls.
+                    if request is not None:
+                        self.results.put(dict(kind='skipped', reason=f'foreground-unavailable: {exc}'))
+                    continue
+                context =self.classifier.classify(foreground.process, foreground.url)
                 # Volume must not wait for a missing or slow media broker.
                 volume_request = request is not None and request[3] in ('upper', 'lower')
                 media = None if volume_request else self.native.media() in (4, 5) if context == 'other' else False

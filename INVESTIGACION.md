@@ -1729,3 +1729,48 @@ se mantienen. 60 pruebas pasan.
 Estado al cierre: escenario B funcional con UB500 en WinUSB (volumen, PowerPoint, Google Slides, reproductor,
 reposo de ~4,5 min). Pendiente: probar sin testsigning (requiere reiniciar), reposo de horas,
 suspensión/hibernación, ahorro de batería real, e instalador/arranque automático del escenario B.
+
+### Operación sin testsigning: caídas y vigilantes (2026-11-14)
+
+Desde el 2026-11-08 el PC arranca **sin testsigning** y el anillo funciona solo por Bumble + UB500 (WinUSB). El
+monitor lo lanza la tarea `JX05 Monitor` con `.jx05-monitor\venv-bumble\Scripts\pythonw.exe tools\monitor_jx05.py
+--run --enabled --backend bumble`. La app 0.2.2 instalada no incluye Bumble y no arranca sola.
+
+Problemas encontrados y solución:
+
+- **Bluetooth interno con código 52.** El filtro de prueba `jx05mtu.inf` (era oem3.inf), firmado solo para pruebas,
+  seguía instalado como extensión del MediaTek, y sin testsigning bloqueaba todo el adaptador. Se desinstaló con
+  `pnputil /delete-driver oem3.inf /uninstall`. Los fuentes siguen en `driver/`; volver a instalarlo exige
+  testsigning.
+- **El anillo no debe estar vinculado con Windows.** Con el MediaTek funcionando, Windows volvió a conectar el
+  anillo y le quitaba el enlace al UB500. Se desvinculó en Configuración. Hay scripts que bloquean su
+  instalación PnP con la directiva DenyDeviceIDs: `.jx05-monitor\ban-ring-windows.ps1` y
+  `unban-ring-windows.ps1` (requieren admin). La directiva **no está activa**: se aplicó y se quitó a petición
+  del usuario.
+- **Controles pausados por errores transitorios.** `Router.run` desactivaba el presentador ante cualquier
+  excepción, incluida la consulta de la ventana en primer plano (`Foreground HRESULT=80010108` RPC desconectado,
+  `80070005` ventana elevada). Ahora esa consulta, si falla, solo descarta la pulsación (`skipped`
+  `foreground-unavailable`). La segunda consulta, la de la pestaña del navegador, todavía desactiva si falla.
+- **El monitor moría sin dejar error.** Traza capturada: si el anillo se cae durante `peer.discover_all()`, Bumble
+  cancela el `pending_response` GATT y el `CancelledError` sube como si alguien hubiera cancelado la tarea.
+  `_session` no lo capturaba (a propósito, para respetar Ctrl+C), `asyncio.run` terminaba y `pythonw` ocultaba
+  la traza. Se reprodujo dos veces matando y relanzando el monitor. Ahora `_session` reintenta si
+  `asyncio.current_task().cancelling()` es 0 y relanza si la tarea sí fue cancelada. `monitor_jx05.py` escribe
+  cualquier `BaseException` con su traza en `.jx05-monitor\startup-error.txt`.
+- **El UB500 queda colgado tras el modo de espera moderno.** Al entrar en espera Windows corta el USB (eventos
+  Kernel-PnP 1010 que coinciden con Kernel-Power 506). A veces el dongle vuelve como `USB\VID_0000&PID_0002`
+  (falla el descriptor). Así estuvo desde el 2026-11-13 11:09 hasta el 2026-11-14 09:18, cuando
+  `pnputil /restart-device` lo recuperó.
+
+Vigilantes instalados (`.jx05-monitor\set-watchdogs.ps1` y `set-watchdogs-2.ps1`, admin; cómo deshacerlos está en
+los comentarios):
+
+- `JX05 Monitor`: además del disparador de inicio de sesión, tiene uno por tiempo cada 5 min. Con `IgnoreNew` no se
+  duplica y solo revive un monitor muerto. Probado: se mató el proceso y volvió en 40 s. Hay que tenerlo en cuenta
+  para pararlo a propósito: hay que deshabilitar la tarea.
+- `JX05 USB Recover` (SYSTEM, cada 5 min): reinicia los dispositivos presentes `USB\VID_0000&PID_000*` en error.
+  El comando va inline en la tarea, no en un `.ps1` del repo, para que un archivo editable sin admin no se
+  ejecute como SYSTEM. **No se probó con el dongle realmente colgado.**
+
+Las tareas apuntan a la ruta del repo: si se mueve la carpeta, el monitor deja de arrancar. 70 pruebas pasan.
+Pendiente: confirmar tras un reinicio y tras una noche en espera que el monitor y el UB500 se recuperan solos.
