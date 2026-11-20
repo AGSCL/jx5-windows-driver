@@ -2,7 +2,7 @@
 param([switch]$Bumble)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
-$version = '0.3.0'
+$version = '0.3.1'
 $runtimeZip = Join-Path $repo '.toolchain/python-3.15.2-embed-amd64.zip'
 if ((Get-FileHash $runtimeZip).Hash -ne 'D012F3AA29CF07436DAE8AEA1FEC0FD195C2612A0B059B1F915AE0AFB9AD1F62') {
     throw 'Falta el runtime oficial verificado. Consulta packaging/LEEME.txt.'

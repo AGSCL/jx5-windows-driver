@@ -1,5 +1,14 @@
 # JX-05 como pasador en Windows 11
 
+## Descarga para el receptor TP-Link UB500
+
+[Descargar JX05 Presenter 0.3.1 para Windows 11 x64 (ZIP)](https://github.com/AGSCL/jx5-windows-driver/releases/download/v0.3.1/JX05-0.3.1-bumble-win-x64.zip)
+
+Extrae el ZIP completo. En un PC nuevo, conecta el UB500 y ejecuta
+`Preparar-dongle.cmd`. Abre `JX05.exe` para usar el anillo o `Instalar.cmd`
+si quieres que arranque al iniciar sesión. Esta versión permite controlar una
+presentación visible en Edge mientras trabajas en Zoom en otro monitor.
+
 ## Aplicación instalable 0.2.2 preliminar
 
 Paquete piloto: `build/JX05-0.2.2-win-x64.zip`. Extrae todo y ejecuta
@@ -210,7 +219,7 @@ Las pruebas, hashes y tareas pendientes de cada uno están en [INVESTIGACION.md]
 | Lectura de botones | `tools/capture_raw_hid.py` (Raw Input) | `tools/capture_bumble_hid.py` (notificaciones GATT) |
 | Arranque | `JX05.exe` / `monitor_jx05.py --run` | `python tools/monitor_jx05.py --run --backend bumble` (entorno `.jx05-monitor/venv-bumble`) |
 | Windows ve el anillo | Sí (HID vendor FF00:0001) | No (solo Bumble lo atiende) |
-| Estado | Validado en uso y empaquetado | Informes reales recibidos (257 en 40 s, idénticos a Raw Input); sin empaquetar |
+| Estado | Validado en uso y empaquetado | Empaquetado en el ZIP 0.3.1 para el UB500 y probado con el anillo |
 
 **Escenario B, requisitos:** dongle UB500 asignado a WinUSB (Zadig), firmware Realtek con
 `python tools/get_rtk_firmware.py`, dependencias de `tools/requirements-bumble.txt`, anillo libre
@@ -220,8 +229,7 @@ Reversión: desinstalar WinUSB del dongle en el Administrador de dispositivos.
 Si el receptor se pierde al reanudar Windows, desconecta el UB500 y vuelve a conectarlo
 al mismo puerto. Con el anillo encendido, espera unos 10 segundos. Si sigue sin responder,
 abre `Detener.cmd` del paquete Bumble, espera unos segundos y vuelve a abrir `JX05.exe`.
-**No cubierto aún:** instalador, arranque automático, reconexión tras suspensión prolongada
-y la prueba sin modo de prueba.
+Queda por verificar la reconexión automática tras una suspensión prolongada y el uso en un PC sin modo de prueba.
 
 **Limitación de firma del escenario A:** la aplicación no necesita testsigning, pero el filtro sí.
 Sin él Windows no abre el servicio HID a aplicaciones, ni con el driver genérico

@@ -1,4 +1,4 @@
-JX05 Presenter 0.3.0 - piloto para Windows 11 x64
+JX05 Presenter 0.3.1 - piloto para Windows 11 x64
 
 INSTALACION
 1. Extrae TODO el ZIP. No ejecutes archivos dentro de la vista del ZIP.

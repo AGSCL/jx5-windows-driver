@@ -1,4 +1,4 @@
-JX05 Presenter 0.3.0 (Bumble) - paquete portatil para Windows 11 x64
+JX05 Presenter 0.3.1 (Bumble) - paquete portatil para Windows 11 x64
 
 QUE NECESITAS
 - El anillo JX-05 B7:FC:01:C6:F3:7E y el dongle TP-Link UB500 (USB 2357:0604).
