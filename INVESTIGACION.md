@@ -1774,3 +1774,15 @@ los comentarios):
 
 Las tareas apuntan a la ruta del repo: si se mueve la carpeta, el monitor deja de arrancar. 70 pruebas pasan.
 Pendiente: confirmar tras un reinicio y tras una noche en espera que el monitor y el UB500 se recuperan solos.
+
+### Prueba de uso del 2026-11-19
+
+- El usuario confirmó que recuperó la conexión del receptor USB tras la suspensión.
+- Con Zoom en primer plano mientras proyectaba la pantalla, el usuario observó que el anillo controlaba el volumen y no pasaba las diapositivas.
+- El registro del mismo día muestra que a las 16:07 el botón inferior bajó el volumen tres veces y a las 16:29 envió la orden de avanzar en PowerPoint. El registro identifica el primer contexto como `other` y no guarda qué aplicación tenía el foco.
+- Una prueba del selector de acciones con `Zoom.exe` en primer plano dio `volume-down` para el botón inferior. Con `POWERPNT.EXE` dio `next`.
+- En la prueba de las 23:20, el usuario confirmó que Alt+Tab no recuperó el avance y que el volumen sí respondía. Con Edge en primer plano, el monitor recibió los gestos derecho e izquierdo a las 23:20:38 y 23:20:39. El contexto seguía en `other` y no se emitieron órdenes de diapositiva.
+- La [clase de Git](https://agscl.github.io/repr2026/clase-git/#/title-slide) usa Quarto con reveal.js. Con la URL de la clase y el mapa del usuario, el detector original devolvió `other`. El actualizado reconoció `revealjs` y asignó avance a derecho/inferior y retroceso a izquierdo/superior. Se reinició el monitor con el cambio.
+- A las 23:25 el monitor registró varias pulsaciones físicas del botón derecho como `next` en `revealjs`. Edge mostraba después la diapositiva `#/paso-4-instale-github-desktop`.
+- Con Zoom activo y la clase visible en otra ventana de Edge se probaron las cuatro órdenes del monitor. Avanzar y retroceder devolvieron la URL a la diapositiva inicial. Dos pulsaciones simuladas del central alternaron F11 y devolvieron la ventana a sus dimensiones originales. Zoom recuperó el foco tras cada orden.
+- Tras instalar la actualización, entre las 23:46 y las 23:47 el monitor recibió pulsaciones físicas del anillo y registró avance, retroceso y dos órdenes del botón central sobre la presentación visible en otra ventana (`visible_window: true`).

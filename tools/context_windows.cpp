@@ -60,13 +60,12 @@ template<typename T> static auto Finish(T const& operation)
     return operation.GetResults();
 }
 
-extern "C" __declspec(dllexport) HRESULT __cdecl JxForeground(Foreground* result)
+static HRESULT ReadWindow(HWND window, Foreground* result)
 {
     if (!result) return E_POINTER;
     *result = {};
     try {
         Apartment apartment;
-        HWND window = GetForegroundWindow();
         if (!window) return S_FALSE;
         result->window = reinterpret_cast<UINT64>(window);
         DWORD pid = 0;
@@ -120,11 +119,94 @@ extern "C" __declspec(dllexport) HRESULT __cdecl JxForeground(Foreground* result
             VariantClear(&value);
             if (result->url[0]) break;
         }
-        if (window != GetForegroundWindow()) { *result = {}; return S_FALSE; }
         return S_OK;
     } catch (...) {
         return winrt::to_hresult();
     }
+}
+
+static HWND ForegroundFrame()
+{
+    // UI Automation can focus Chromium's child renderer HWND inside the deck frame.
+    return GetAncestor(GetForegroundWindow(), GA_ROOT);
+}
+
+extern "C" __declspec(dllexport) HRESULT __cdecl JxForeground(Foreground* result)
+{
+    HWND window = ForegroundFrame();
+    HRESULT hr = ReadWindow(window, result);
+    if (SUCCEEDED(hr) && window != ForegroundFrame()) { *result = {}; return S_FALSE; }
+    return hr;
+}
+
+static bool ExposedFrame(HWND window)
+{
+    if (!IsWindowVisible(window) || !IsWindowEnabled(window) || IsIconic(window)) return false;
+    wchar_t name[128]{};
+    GetClassNameW(window, name, ARRAYSIZE(name));
+    if (wcscmp(name, L"Chrome_WidgetWin_1") && wcscmp(name, L"MozillaWindowClass") &&
+        wcscmp(name, L"PPTFrameClass") && wcscmp(name, L"screenClass") && wcscmp(name, L"PodiumParent")) return false;
+    RECT r{};
+    if (!GetClientRect(window, &r) || r.right <= 0 || r.bottom <= 0) return false;
+    // Sample the document area. Minimized, covered and off-desktop frames cannot win.
+    for (int x : {2, 1, 3}) for (int y : {2, 1, 3}) {
+        POINT p{r.right * x / 4, r.bottom * y / 4};
+        if (ClientToScreen(window, &p) && GetAncestor(WindowFromPoint(p), GA_ROOT) == window) return true;
+    }
+    return false;
+}
+
+extern "C" __declspec(dllexport) HRESULT __cdecl JxVisibleWindow(HWND window, Foreground* result)
+{
+    return ExposedFrame(window) ? ReadWindow(window, result) : S_FALSE;
+}
+
+static bool WaitForFocus(HWND target, HWND previous, unsigned timeout)
+{
+    ULONGLONG until = GetTickCount64() + timeout;
+    for (;;) {
+        HWND active = ForegroundFrame();
+        if (active == target) return true;
+        if ((active && active != previous) || GetTickCount64() >= until) return false;
+        Sleep(10);
+    }
+}
+
+// Run the same validated keyboard path as a foreground deck, then return to the original control.
+extern "C" __declspec(dllexport) int __cdecl JxWithSlideFocus(HWND original, HWND target, int (__cdecl *send)())
+{
+    if (!send || !original || ForegroundFrame() != original || !ExposedFrame(target)) return 0;
+    try {
+        Apartment apartment;
+        winrt::com_ptr<IUIAutomation> automation;
+        winrt::check_hresult(CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
+                                              IID_PPV_ARGS(automation.put())));
+        winrt::com_ptr<IUIAutomationElement> previous, root;
+        (void)automation->GetFocusedElement(previous.put());
+        winrt::check_hresult(automation->ElementFromHandle(target, root.put()));
+        if (ForegroundFrame() != original) return 0;
+        (void)SetForegroundWindow(target);
+        if (!WaitForFocus(target, original, 100) && ForegroundFrame() == original) {
+            VARIANT type{};
+            type.vt = VT_I4;
+            type.lVal = UIA_DocumentControlTypeId;
+            winrt::com_ptr<IUIAutomationCondition> condition;
+            winrt::com_ptr<IUIAutomationElement> document;
+            winrt::check_hresult(automation->CreatePropertyCondition(UIA_ControlTypePropertyId, type, condition.put()));
+            (void)root->FindFirst(TreeScope_Descendants, condition.get(), document.put());
+            if (ForegroundFrame() == original) (void)(document ? document : root)->SetFocus();
+        }
+        if (!WaitForFocus(target, original, 250)) return 0;
+        int sent = send();
+        // Let the target consume the queued keystroke before reactivating Zoom.
+        if (sent) Sleep(100);
+        if (ForegroundFrame() == target && IsWindow(original)) {
+            if (previous) (void)previous->SetFocus();
+            if (!WaitForFocus(original, target, 100) && ForegroundFrame() == target)
+                (void)SetForegroundWindow(original);
+        }
+        return sent;
+    } catch (...) { return 0; }
 }
 
 static bool MusicApp(GlobalSystemMediaTransportControlsSession const& session)
@@ -172,7 +254,7 @@ static int Vlc(int command, UINT64 expectedWindow)
     EnumWindows(FindVlc, reinterpret_cast<LPARAM>(&target));
     if (!target) return 0;
     if (command == 0) return 5;
-    if (reinterpret_cast<UINT64>(GetForegroundWindow()) != expectedWindow) return 0;
+    if (reinterpret_cast<UINT64>(ForegroundFrame()) != expectedWindow) return 0;
     const int commands[] = {0, APPCOMMAND_MEDIA_PREVIOUSTRACK, APPCOMMAND_MEDIA_NEXTTRACK, APPCOMMAND_MEDIA_PLAY_PAUSE};
     if (command < 1 || command > 3) return E_INVALIDARG;
     DWORD_PTR result = 0;
@@ -205,7 +287,7 @@ extern "C" __declspec(dllexport) int __cdecl JxMedia(int command, UINT64 expecte
         if (status != GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing &&
             status != GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused) return 0;
         if (command == 0) return static_cast<int>(status);
-        if (reinterpret_cast<UINT64>(GetForegroundWindow()) != expectedWindow) return 0;
+        if (reinterpret_cast<UINT64>(ForegroundFrame()) != expectedWindow) return 0;
         auto controls = playback.Controls();
         switch (command) {
         case 1: return controls.IsPreviousEnabled() && Finish(session.TrySkipPreviousAsync()) ? 1 : 0;

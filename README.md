@@ -43,8 +43,8 @@ abierto. En VLC se confirmaron pausa/reanudación, anterior/siguiente, repetici�
 y volumen.
 
 El filtro mantiene el controlador MediaTek existente y corrige la lectura HID.
-El monitor convierte los informes del anillo en teclas de la aplicación en
-primer plano. No modifica el firmware. El monitor no instala filtros ni cambia
+El monitor dirige los botones a la presentación visible o a los controles multimedia de Windows.
+No modifica el firmware. El monitor no instala filtros ni cambia
 el arranque. La instalación experimental sí requirió herramientas WDK y modo
 de firma de prueba, autorizados por el usuario. BitLocker está protegido.
 
@@ -65,7 +65,7 @@ En ejecución desde el código fuente, `--run` arranca desactivado y
 `--run --enabled` arranca activo. La aplicación instalada usa la segunda opción.
 `--presenter-on` habilita tanto las
 presentaciones como la música residual; `--presenter-off` desactiva ambas.
-Con una presentación reconocida en primer plano, superior/izquierdo
+Con una presentación reconocida y visible, superior/izquierdo
 retroceden; inferior/derecho avanzan. Mantener pulsado repite aproximadamente
 cada 750 ms mientras llegan informes. Soltar detiene la repetición. La
 identificación se basa en ocho capturas confirmadas, no en códigos supuestos.
@@ -111,13 +111,21 @@ navegador. Usa el perfil con la presentación en primer plano.
 
 ## Música residual y prioridad automática
 
-PowerPoint y las pestañas reconocidas de Google Slides o xaringan tienen
+PowerPoint y las pestañas reconocidas de Google Slides, xaringan o reveal.js tienen
 prioridad, incluso en edición. Se reconoce PowerPoint por su proceso y las
-pestañas por la URL visible mediante accesibilidad de Windows. Para xaringan
-se lee el HTML local o público buscando marcadores de remark; las consultas
+pestañas por la URL visible mediante accesibilidad de Windows. Para xaringan y reveal.js
+se lee el HTML local o público buscando los marcadores de remark o los contenedores de diapositivas de reveal.js. Las consultas
 web no usan cookies ni credenciales y se guardan en memoria durante un minuto.
 No se registran URLs, contenido de páginas ni títulos de canciones. Si no se
 puede identificar una pestaña, el control queda inactivo en ella.
+
+Si la ventana activa contiene una presentación, el anillo la controla primero.
+Si trabajas en Zoom y la clase está visible en otra ventana o monitor, el anillo
+activa brevemente la presentación, envía la orden y devuelve el foco a Zoom.
+La clase debe ser la pestaña seleccionada de su ventana. Si hay varias
+presentaciones visibles, se elige la primera según el orden de ventanas de Windows.
+Derecho o inferior avanza e izquierdo o superior retrocede. En Quarto/reveal.js
+el central en modo automático alterna la pantalla completa del navegador con F11.
 
 Fuera de las presentaciones, superior/inferior controlan el volumen de Windows
 también sin reproductor abierto (desde 0.2.1). Si hay un reproductor compatible abierto con música
@@ -209,6 +217,9 @@ Las pruebas, hashes y tareas pendientes de cada uno están en [INVESTIGACION.md]
 y sin emparejar con Windows. El adaptador interno sigue disponible para ratón y audífonos.
 Variables opcionales: `JX05_BUMBLE_TRANSPORT` (por defecto `usb:2357:0604`) y `JX05_RING_ADDRESS`.
 Reversión: desinstalar WinUSB del dongle en el Administrador de dispositivos.
+Si el receptor se pierde al reanudar Windows, desconecta el UB500 y vuelve a conectarlo
+al mismo puerto. Con el anillo encendido, espera unos 10 segundos. Si sigue sin responder,
+abre `Detener.cmd` del paquete Bumble, espera unos segundos y vuelve a abrir `JX05.exe`.
 **No cubierto aún:** instalador, arranque automático, reconexión tras suspensión prolongada
 y la prueba sin modo de prueba.
 

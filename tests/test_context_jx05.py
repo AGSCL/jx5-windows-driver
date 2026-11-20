@@ -9,6 +9,11 @@ from tools.context_jx05 import Classifier, Router, Windows, choose_action
 from tools.map_jx05 import DEFAULTS
 
 
+class FakeWindows(SimpleNamespace):
+    def visible_windows(self, exclude):
+        return ()
+
+
 class ContextTests(unittest.TestCase):
     def test_unavailable_media_query_is_inert_but_failed_command_raises(self):
         native = Windows.__new__(Windows)
@@ -18,7 +23,7 @@ class ContextTests(unittest.TestCase):
 
     def test_presentations_always_win_over_music(self):
         mapping = dict(DEFAULTS, center='present')
-        for app in ('powerpoint', 'google', 'xaringan'):
+        for app in ('powerpoint', 'google', 'xaringan', 'revealjs'):
             self.assertEqual(choose_action(app, 'left', mapping, True), 'previous')
             self.assertEqual(choose_action(app, 'upper', mapping, True), 'previous')
             self.assertEqual(choose_action(app, 'center', mapping, True), app)
@@ -50,7 +55,7 @@ class ContextTests(unittest.TestCase):
                                                 ('music.exe', 'lower', None, None),
                                                 ('POWERPNT.EXE', 'center', 'powerpoint', None)]:
             calls, keys, volumes = [], [], []
-            native = SimpleNamespace(window=lambda: 123,
+            native = FakeWindows(window=lambda: 123,
                 foreground=lambda: SimpleNamespace(window=123, process=process, url=''),
                 media=lambda command=0, window=0: calls.append((command, window)) or (5 if command == 0 else 1),
                 volume=lambda direction: volumes.append(direction) or 50)
@@ -79,7 +84,7 @@ class ContextTests(unittest.TestCase):
 
     def _volume_run(self, level, presses, expected):
         volumes = []
-        native = SimpleNamespace(window=lambda: 123,
+        native = FakeWindows(window=lambda: 123,
             foreground=lambda: SimpleNamespace(window=123, process='notepad.exe', url=''),
             media=lambda: 0, volume=lambda direction: volumes.append(direction) or level)
         with patch('tools.context_jx05.Windows', return_value=native):
@@ -127,7 +132,7 @@ class ContextTests(unittest.TestCase):
             failure = next(calls, None)
             if failure: raise failure
             return SimpleNamespace(window=123, process='POWERPNT.EXE', url='')
-        native = SimpleNamespace(window=lambda: 123, foreground=foreground)
+        native = FakeWindows(window=lambda: 123, foreground=foreground)
         with patch('tools.context_jx05.Windows', return_value=native):
             router = Router(keys.append)
         try:
@@ -166,6 +171,43 @@ class ContextTests(unittest.TestCase):
         with patch('tools.context_jx05.urlopen', side_effect=OSError('offline')):
             self.assertEqual(Classifier().classify('chrome.exe', 'https://example.test/talk'), 'unknown')
 
+    def test_zoom_and_visible_slides(self):
+        zoom = SimpleNamespace(window=1, process='Zoom.exe', url='')
+        deck = SimpleNamespace(window=2, process='msedge.exe',
+                               url='https://docs.google.com/presentation/d/test')
+        ppt = SimpleNamespace(window=3, process='powerpnt.exe', url='')
+        for original, candidates, activated, button, expected in [
+                (zoom, [deck], deck, 'lower', 'next'),
+                (zoom, [deck], deck, 'center', 'google'),
+                (zoom, [ppt], ppt, 'left', 'previous'),
+                (ppt, [deck], ppt, 'center', 'powerpoint'),
+                (zoom, [deck], SimpleNamespace(window=2, process='msedge.exe', url='about:blank'),
+                 'right', None)]:
+            active = [original]
+            keys = []
+            def focus(original_hwnd, target_hwnd, dispatch):
+                self.assertEqual((original_hwnd, target_hwnd), (original.window, activated.window))
+                active[0] = activated
+                try:
+                    return dispatch()
+                finally:
+                    active[0] = original
+            native = FakeWindows(window=lambda: active[0].window, foreground=lambda: active[0],
+                                 visible_windows=lambda _: candidates, with_slide_focus=focus)
+            with patch('tools.context_jx05.Windows', return_value=native):
+                router = Router(lambda action: keys.append((active[0].window, action)))
+            try:
+                router.configure(True, dict(DEFAULTS, center='present'))
+                router.submit(button)
+                result = router.results.get(timeout=2)
+                while result['kind'] == 'context':
+                    result = router.results.get(timeout=2)
+                self.assertEqual(result['kind'], 'action' if expected else 'skipped')
+                self.assertEqual(keys, [(activated.window, expected)] if expected else [])
+                self.assertIs(active[0], original)
+            finally:
+                router.stop()
+
     def test_web_xaringan_and_cache_ignores_slide_fragment(self):
         page = io.BytesIO(b'<html><div class="remark-slide-content">slide</div></html>')
         page.geturl = lambda: 'https://example.test/deck.html'
@@ -174,3 +216,15 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(classifier.classify('chrome.exe', 'https://example.test/deck.html#1'), 'xaringan')
             self.assertEqual(classifier.classify('chrome.exe', 'https://example.test/deck.html#2'), 'xaringan')
             self.assertEqual(request.call_count, 1)
+
+    def test_quarto_reveal_deck_crossing_read_boundary(self):
+        url = 'https://example.test/clase-git/'
+        for markup, expected in [(b'<div class="reveal">\n  <div class="slides">', 'revealjs'),
+                                 (b'<div class="reveal">Show answer</div>', 'other')]:
+            page = io.BytesIO(b' ' * (65536 - 10) + markup)
+            page.geturl = lambda: url
+            with patch('tools.context_jx05.urlopen', return_value=page) as request:
+                classifier = Classifier()
+                for slide in ('title-slide', 'git'):
+                    self.assertEqual(classifier.classify('msedge.exe', url + '#/' + slide), expected)
+                request.assert_called_once()

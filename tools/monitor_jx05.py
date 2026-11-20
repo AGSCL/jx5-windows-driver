@@ -106,10 +106,12 @@ def foreground_class():
     user = ctypes.WinDLL('user32', use_last_error=True)
     user.GetForegroundWindow.argtypes = []
     user.GetForegroundWindow.restype = w.HWND
+    user.GetAncestor.argtypes = [w.HWND, w.UINT]
+    user.GetAncestor.restype = w.HWND
     user.GetClassNameW.argtypes = [w.HWND, w.LPWSTR, ctypes.c_int]
     user.GetClassNameW.restype = ctypes.c_int
     name = ctypes.create_unicode_buffer(256)
-    if not user.GetClassNameW(user.GetForegroundWindow(), name, len(name)):
+    if not user.GetClassNameW(user.GetAncestor(user.GetForegroundWindow(), 2), name, len(name)):
         raise ctypes.WinError(ctypes.get_last_error())
     return name.value
 
@@ -122,6 +124,8 @@ def foreground_fullscreen():
     user, dwm = c.WinDLL('user32', use_last_error=True), c.WinDLL('dwmapi')
     user.GetForegroundWindow.argtypes = []
     user.GetForegroundWindow.restype = w.HWND
+    user.GetAncestor.argtypes = [w.HWND, w.UINT]
+    user.GetAncestor.restype = w.HWND
     user.GetWindowLongW.argtypes = [w.HWND, c.c_int]
     user.GetWindowLongW.restype = w.LONG
     user.MonitorFromWindow.argtypes = [w.HWND, w.DWORD]
@@ -130,7 +134,7 @@ def foreground_fullscreen():
     user.GetMonitorInfoW.restype = w.BOOL
     dwm.DwmGetWindowAttribute.argtypes = [w.HWND, w.DWORD, c.c_void_p, w.DWORD]
     dwm.DwmGetWindowAttribute.restype = c.c_int32
-    hwnd = user.GetForegroundWindow()
+    hwnd = user.GetAncestor(user.GetForegroundWindow(), 2)
     if user.GetWindowLongW(hwnd, -16) & 0x00c00000:
         return False
     rect, monitor = w.RECT(), Monitor(size=c.sizeof(Monitor))
@@ -160,7 +164,7 @@ def send_key(action):
     send.argtypes = [w.UINT, c.POINTER(Input), c.c_int]
     send.restype = w.UINT
     keys = {'next': (0x27,), 'previous': (0x25,), 'powerpoint': (0x10, 0x74),
-            'google': (0x11, 0x74), 'xaringan': (0x46,)}[action]
+            'google': (0x11, 0x74), 'xaringan': (0x46,), 'revealjs': (0x7a,)}[action]
     if action == 'powerpoint' and foreground_class() in ('screenClass', 'PodiumParent'):
         keys = (0x1b,)
     if action == 'google' and foreground_fullscreen():

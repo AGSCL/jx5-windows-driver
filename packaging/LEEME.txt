@@ -31,9 +31,12 @@ antes de usarlo en una presentacion. Un fallo del filtro puede afectar todo el
 adaptador Bluetooth o Windows; conserva los controladores originales del PC.
 
 USO
-Presentacion en primer plano (tambien en edicion): superior/izquierdo retrocede,
-inferior/derecho avanza; central corto entra/sale de presentacion o pantalla
-completa. PowerPoint, Google Slides y xaringan tienen prioridad sobre la musica.
+Con una presentacion visible, superior/izquierdo retrocede e inferior/derecho
+avanza. El central corto en modo automatico entra o sale de presentacion o
+pantalla completa. En Quarto/reveal.js alterna F11. PowerPoint, Google Slides,
+xaringan y reveal.js tienen prioridad sobre la musica. Puedes usar Zoom en
+otro monitor mientras la clase siga visible en la pestana seleccionada de su
+ventana. El foco vuelve a Zoom despues de enviar la orden.
 Mantener una direccion repite. Central >=3 segundos apaga fisicamente el anillo.
 
 Fuera de presentaciones: izquierdo/anterior, derecho/siguiente, central

@@ -26,12 +26,19 @@ INSTALAR (PC propio: arranque automatico al iniciar sesion)
 - Apps instaladas de Windows > JX05 Presenter lo desinstala.
 
 USO
-Presentacion en primer plano: superior/izquierdo retrocede, inferior/derecho
-avanza; central corto entra/sale de presentacion. Fuera de presentaciones:
+Con una presentacion visible, superior/izquierdo retrocede e inferior/derecho
+avanza. En Quarto/reveal.js, el central corto en modo automatico alterna la
+pantalla completa con F11. Puedes usar Zoom en otro monitor mientras la clase
+siga visible en la pestana seleccionada de su ventana. El anillo da prioridad
+a la presentacion y devuelve el foco a Zoom despues de enviar la orden.
+Fuera de presentaciones:
 izquierdo/derecho pista, central pausa, superior/inferior volumen de Windows.
 Central >=3 segundos apaga el anillo. Prueba los botones antes de presentar.
 
 SI NO RESPONDE
+- Si ocurre despues de la suspension, desconecta y vuelve a conectar el UB500.
+  Con el anillo encendido, espera unos 10 segundos. Si sigue sin responder,
+  abre Detener.cmd, espera unos segundos y vuelve a abrir JX05.exe.
 - Inicio > JX05 - Estado (o %LOCALAPPDATA%\JX05\status.json). Un error de
   transporte USB suele indicar que el UB500 no esta en WinUSB: repite
   Preparar-dongle.cmd. Si el anillo esta emparejado con Windows, quitalo
